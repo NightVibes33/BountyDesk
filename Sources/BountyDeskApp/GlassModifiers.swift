@@ -1,14 +1,12 @@
 import SwiftUI
 
 extension View {
-    func deskPanel(cornerRadius: CGFloat = 18) -> some View {
-        self
-            .padding(16)
-            .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
-    }
-
-    func deskControl() -> some View {
-        self
-            .glassEffect(.regular.interactive(), in: .capsule)
+    @ViewBuilder
+    func floatingGlassControl() -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: .rect(cornerRadius: 14))
+        } else {
+            self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        }
     }
 }

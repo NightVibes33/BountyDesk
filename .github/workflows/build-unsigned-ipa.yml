@@ -28,6 +28,16 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
+      - name: Run unit tests
+        run: |
+          set -euo pipefail
+          DEVICE_ID=$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/ { print $2; exit }')
+          if [ -n "$DEVICE_ID" ]; then
+            xcodebuild               -project BountyDesk.xcodeproj               -scheme BountyDesk               -destination "id=$DEVICE_ID"               test
+          else
+            xcodebuild               -project BountyDesk.xcodeproj               -scheme BountyDesk               -destination 'generic/platform=iOS Simulator'               build-for-testing
+          fi
+
       - name: Build unsigned archive
         run: |
           xcodebuild             -project BountyDesk.xcodeproj             -scheme BountyDesk             -configuration Release             -sdk iphoneos             -destination 'generic/platform=iOS'             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             archive             -archivePath build/BountyDesk.xcarchive

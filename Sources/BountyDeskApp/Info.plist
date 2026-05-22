@@ -42,5 +42,15 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.example.bountydesk.refresh</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
+	<key>NSFaceIDUsageDescription</key>
+	<string>BountyDesk can use device security to protect saved access tokens when iOS requires authentication.</string>
 </dict>
 </plist>

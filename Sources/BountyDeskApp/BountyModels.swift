@@ -1,14 +1,15 @@
 import Foundation
+import SwiftData
 
-enum BountyStatus: String, CaseIterable, Codable, Identifiable {
+enum BountyWorkflowStatus: String, CaseIterable, Codable, Identifiable {
     case watching = "Watching"
     case claimed = "Claimed"
     case submitted = "Submitted"
-    case review = "In Review"
-    case merged = "Merged"
+    case pendingReview = "Pending Review"
+    case mergedUnpaid = "Merged Unpaid"
     case paid = "Paid"
+    case lost = "Closed/Lost"
     case blocked = "Blocked"
-    case skipped = "Skipped"
 
     var id: String { rawValue }
 
@@ -17,135 +18,866 @@ enum BountyStatus: String, CaseIterable, Codable, Identifiable {
         case .watching: return "eye"
         case .claimed: return "flag"
         case .submitted: return "paperplane"
-        case .review: return "text.badge.checkmark"
-        case .merged: return "arrow.triangle.merge"
+        case .pendingReview: return "text.badge.checkmark"
+        case .mergedUnpaid: return "arrow.triangle.merge"
         case .paid: return "banknote"
+        case .lost: return "xmark.circle"
         case .blocked: return "exclamationmark.triangle"
-        case .skipped: return "minus.circle"
         }
     }
 }
 
-enum BountyPriority: String, CaseIterable, Codable, Identifiable {
-    case high = "High"
-    case medium = "Medium"
-    case low = "Low"
+enum BountySource: String, CaseIterable, Codable, Identifiable {
+    case github = "GitHub"
+    case algoraPublic = "Algora Public"
+    case algoraAuthenticated = "Algora API"
+    case manual = "Manual"
+    case mock = "Mock"
+
+    var id: String { rawValue }
+}
+
+enum PullRequestState: String, CaseIterable, Codable, Identifiable {
+    case open = "Open"
+    case draft = "Draft"
+    case merged = "Merged"
+    case closed = "Closed"
+    case unknown = "Unknown"
+
+    var id: String { rawValue }
+}
+
+enum IssueState: String, CaseIterable, Codable, Identifiable {
+    case open = "Open"
+    case closed = "Closed"
+    case unknown = "Unknown"
+
+    var id: String { rawValue }
+}
+
+enum ClaimStatus: String, CaseIterable, Codable, Identifiable {
+    case unknown = "Unknown"
+    case pending = "Pending"
+    case accepted = "Accepted"
+    case paymentProcessing = "Payment Processing"
+    case paymentSucceeded = "Payment Succeeded"
+    case rejected = "Rejected"
+
+    var id: String { rawValue }
+}
+
+enum CheckState: String, CaseIterable, Codable, Identifiable {
+    case passing = "Passing"
+    case failing = "Failing"
+    case pending = "Pending"
+    case noneConfigured = "None Configured"
+    case unknown = "Unknown"
 
     var id: String { rawValue }
 
-    var rank: Int {
+    var systemImage: String {
         switch self {
-        case .high: return 0
-        case .medium: return 1
-        case .low: return 2
+        case .passing: return "checkmark.circle"
+        case .failing: return "xmark.octagon"
+        case .pending: return "clock"
+        case .noneConfigured: return "minus.circle"
+        case .unknown: return "questionmark.circle"
         }
     }
 }
 
-struct Bounty: Codable, Identifiable, Equatable {
-    var id: UUID
-    var repoOwner: String
-    var repoName: String
-    var issueNumber: Int
-    var title: String
-    var amount: Int
-    var currency: String
-    var status: BountyStatus
-    var priority: BountyPriority
-    var labels: [String]
-    var prURL: URL?
-    var notes: String
-    var competitionCount: Int
-    var checkSummary: String
-    var updatedAt: Date
+enum RiskLevel: String, CaseIterable, Codable, Identifiable {
+    case low = "Low"
+    case medium = "Medium"
+    case high = "High"
+
+    var id: String { rawValue }
+}
+
+enum AlertKind: String, CaseIterable, Codable, Identifiable {
+    case maintainerComment = "Maintainer Comment"
+    case botStatus = "Bot Status"
+    case checksFailed = "Checks Failed"
+    case checksRecovered = "Checks Recovered"
+    case pullRequestMerged = "PR Merged"
+    case pullRequestClosed = "PR Closed"
+    case issueClosed = "Issue Closed"
+    case claimStatusChanged = "Claim Status Changed"
+    case competitorMerged = "Competitor Merged"
+    case payoutStatusChanged = "Payout Status Changed"
+    case warning = "Warning"
+
+    var id: String { rawValue }
+}
+
+@Model
+final class UserAccount {
+    @Attribute(.unique) var id: UUID
+    var githubLogin: String
+    var githubAvatarURLString: String?
+    var githubHTMLURLString: String?
+    var hasGitHubToken: Bool
+    var hasAlgoraToken: Bool
+    var lastValidatedAt: Date?
     var createdAt: Date
+    var updatedAt: Date
 
     init(
         id: UUID = UUID(),
-        repoOwner: String,
-        repoName: String,
-        issueNumber: Int,
-        title: String,
-        amount: Int,
-        currency: String = "USD",
-        status: BountyStatus = .watching,
-        priority: BountyPriority = .medium,
-        labels: [String] = [],
-        prURL: URL? = nil,
-        notes: String = "",
-        competitionCount: Int = 0,
-        checkSummary: String = "Not checked",
-        updatedAt: Date = Date(),
-        createdAt: Date = Date()
+        githubLogin: String,
+        githubAvatarURLString: String? = nil,
+        githubHTMLURLString: String? = nil,
+        hasGitHubToken: Bool = false,
+        hasAlgoraToken: Bool = false,
+        lastValidatedAt: Date? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
     ) {
         self.id = id
-        self.repoOwner = repoOwner
-        self.repoName = repoName
-        self.issueNumber = issueNumber
-        self.title = title
-        self.amount = amount
-        self.currency = currency
-        self.status = status
-        self.priority = priority
-        self.labels = labels
-        self.prURL = prURL
-        self.notes = notes
-        self.competitionCount = competitionCount
-        self.checkSummary = checkSummary
-        self.updatedAt = updatedAt
+        self.githubLogin = githubLogin
+        self.githubAvatarURLString = githubAvatarURLString
+        self.githubHTMLURLString = githubHTMLURLString
+        self.hasGitHubToken = hasGitHubToken
+        self.hasAlgoraToken = hasAlgoraToken
+        self.lastValidatedAt = lastValidatedAt
         self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+@Model
+final class WatchedOrg {
+    @Attribute(.unique) var handle: String
+    var displayName: String
+    var isEnabled: Bool
+    var createdAt: Date
+
+    init(handle: String, displayName: String? = nil, isEnabled: Bool = true, createdAt: Date = Date()) {
+        self.handle = handle
+        self.displayName = displayName ?? handle
+        self.isEnabled = isEnabled
+        self.createdAt = createdAt
+    }
+}
+
+@Model
+final class Bounty {
+    @Attribute(.unique) var stableID: String
+    var id: UUID
+    var sourceRaw: String
+    var repoOwner: String
+    var repoName: String
+    var issueNumber: Int
+    var linkedPullRequestNumber: Int?
+    var title: String
+    var issueBodySummary: String
+    var pullRequestSummary: String
+    var amount: Int
+    var currency: String
+    var labelsText: String
+    var algoraEvidenceText: String
+    var rewardLinksText: String
+    var workflowStatusRaw: String
+    var issueStateRaw: String
+    var claimStatusRaw: String
+    var checkStateRaw: String
+    var riskLevelRaw: String
+    var payoutChance: Int
+    var riskFactorsText: String
+    var nextAction: String
+    var latestMaintainerComment: String
+    var latestBotComment: String
+    var competitionCount: Int
+    var hasRewardedSignal: Bool
+    var requiresVideo: Bool
+    var hasDemoProof: Bool
+    var repoArchived: Bool
+    var assignedOnly: Bool
+    var userAppearsAssigned: Bool
+    var maintainerAssignmentRequired: Bool
+    var priorRejectedSignal: Bool
+    var hasClearVerification: Bool
+    var hasTests: Bool
+    var createdAt: Date
+    var updatedAt: Date
+    var lastRefreshedAt: Date?
+
+    init(snapshot: TrackedBountySnapshot) {
+        self.stableID = snapshot.stableID
+        self.id = snapshot.id
+        self.sourceRaw = snapshot.source.rawValue
+        self.repoOwner = snapshot.repoOwner
+        self.repoName = snapshot.repoName
+        self.issueNumber = snapshot.issueNumber
+        self.linkedPullRequestNumber = snapshot.linkedPullRequestNumber
+        self.title = snapshot.title
+        self.issueBodySummary = snapshot.issueBodySummary
+        self.pullRequestSummary = snapshot.pullRequestSummary
+        self.amount = snapshot.amount
+        self.currency = snapshot.currency
+        self.labelsText = LineCodec.encode(snapshot.labels)
+        self.algoraEvidenceText = LineCodec.encode(snapshot.algoraEvidence)
+        self.rewardLinksText = LineCodec.encode(snapshot.rewardLinks)
+        self.workflowStatusRaw = snapshot.workflowStatus.rawValue
+        self.issueStateRaw = snapshot.issueState.rawValue
+        self.claimStatusRaw = snapshot.claimStatus.rawValue
+        self.checkStateRaw = snapshot.checkState.rawValue
+        self.riskLevelRaw = snapshot.riskLevel.rawValue
+        self.payoutChance = snapshot.payoutChance
+        self.riskFactorsText = LineCodec.encode(snapshot.riskFactors)
+        self.nextAction = snapshot.nextAction
+        self.latestMaintainerComment = snapshot.latestMaintainerComment
+        self.latestBotComment = snapshot.latestBotComment
+        self.competitionCount = snapshot.competitionCount
+        self.hasRewardedSignal = snapshot.hasRewardedSignal
+        self.requiresVideo = snapshot.requiresVideo
+        self.hasDemoProof = snapshot.hasDemoProof
+        self.repoArchived = snapshot.repoArchived
+        self.assignedOnly = snapshot.assignedOnly
+        self.userAppearsAssigned = snapshot.userAppearsAssigned
+        self.maintainerAssignmentRequired = snapshot.maintainerAssignmentRequired
+        self.priorRejectedSignal = snapshot.priorRejectedSignal
+        self.hasClearVerification = snapshot.hasClearVerification
+        self.hasTests = snapshot.hasTests
+        self.createdAt = snapshot.createdAt
+        self.updatedAt = snapshot.updatedAt
+        self.lastRefreshedAt = snapshot.lastRefreshedAt
+    }
+
+    func apply(_ snapshot: TrackedBountySnapshot) {
+        source = snapshot.source
+        repoOwner = snapshot.repoOwner
+        repoName = snapshot.repoName
+        issueNumber = snapshot.issueNumber
+        linkedPullRequestNumber = snapshot.linkedPullRequestNumber
+        title = snapshot.title
+        issueBodySummary = snapshot.issueBodySummary
+        pullRequestSummary = snapshot.pullRequestSummary
+        amount = snapshot.amount
+        currency = snapshot.currency
+        labels = snapshot.labels
+        algoraEvidence = snapshot.algoraEvidence
+        rewardLinks = snapshot.rewardLinks
+        workflowStatus = snapshot.workflowStatus
+        issueState = snapshot.issueState
+        claimStatus = snapshot.claimStatus
+        checkState = snapshot.checkState
+        riskLevel = snapshot.riskLevel
+        payoutChance = snapshot.payoutChance
+        riskFactors = snapshot.riskFactors
+        nextAction = snapshot.nextAction
+        latestMaintainerComment = snapshot.latestMaintainerComment
+        latestBotComment = snapshot.latestBotComment
+        competitionCount = snapshot.competitionCount
+        hasRewardedSignal = snapshot.hasRewardedSignal
+        requiresVideo = snapshot.requiresVideo
+        hasDemoProof = snapshot.hasDemoProof
+        repoArchived = snapshot.repoArchived
+        assignedOnly = snapshot.assignedOnly
+        userAppearsAssigned = snapshot.userAppearsAssigned
+        maintainerAssignmentRequired = snapshot.maintainerAssignmentRequired
+        priorRejectedSignal = snapshot.priorRejectedSignal
+        hasClearVerification = snapshot.hasClearVerification
+        hasTests = snapshot.hasTests
+        updatedAt = snapshot.updatedAt
+        lastRefreshedAt = snapshot.lastRefreshedAt
+    }
+
+    var source: BountySource {
+        get { BountySource(rawValue: sourceRaw) ?? .manual }
+        set { sourceRaw = newValue.rawValue }
+    }
+
+    var workflowStatus: BountyWorkflowStatus {
+        get { BountyWorkflowStatus(rawValue: workflowStatusRaw) ?? .watching }
+        set { workflowStatusRaw = newValue.rawValue }
+    }
+
+    var issueState: IssueState {
+        get { IssueState(rawValue: issueStateRaw) ?? .unknown }
+        set { issueStateRaw = newValue.rawValue }
+    }
+
+    var claimStatus: ClaimStatus {
+        get { ClaimStatus(rawValue: claimStatusRaw) ?? .unknown }
+        set { claimStatusRaw = newValue.rawValue }
+    }
+
+    var checkState: CheckState {
+        get { CheckState(rawValue: checkStateRaw) ?? .unknown }
+        set { checkStateRaw = newValue.rawValue }
+    }
+
+    var riskLevel: RiskLevel {
+        get { RiskLevel(rawValue: riskLevelRaw) ?? .medium }
+        set { riskLevelRaw = newValue.rawValue }
+    }
+
+    var labels: [String] {
+        get { LineCodec.decode(labelsText) }
+        set { labelsText = LineCodec.encode(newValue) }
+    }
+
+    var algoraEvidence: [String] {
+        get { LineCodec.decode(algoraEvidenceText) }
+        set { algoraEvidenceText = LineCodec.encode(newValue) }
+    }
+
+    var rewardLinks: [String] {
+        get { LineCodec.decode(rewardLinksText) }
+        set { rewardLinksText = LineCodec.encode(newValue) }
+    }
+
+    var riskFactors: [String] {
+        get { LineCodec.decode(riskFactorsText) }
+        set { riskFactorsText = LineCodec.encode(newValue) }
     }
 
     var repoSlug: String { "\(repoOwner)/\(repoName)" }
     var issueSlug: String { "\(repoSlug)#\(issueNumber)" }
-    var githubIssueURL: URL { URL(string: "https://github.com/\(repoOwner)/\(repoName)/issues/\(issueNumber)")! }
-    var algoraIssueURL: URL { URL(string: "https://algora.io/\(repoOwner)/\(repoName)/issues/\(issueNumber)")! }
+    var githubIssueURLString: String { "https://github.com/\(repoOwner)/\(repoName)/issues/\(issueNumber)" }
+    var algoraIssueURLString: String { "https://algora.io/\(repoOwner)/\(repoName)/issues/\(issueNumber)" }
+    var githubIssueURL: URL { URL(string: githubIssueURLString)! }
+    var algoraIssueURL: URL { URL(string: algoraIssueURLString)! }
+    var pullRequestURL: URL? {
+        guard let linkedPullRequestNumber else { return nil }
+        return URL(string: "https://github.com/\(repoOwner)/\(repoName)/pull/\(linkedPullRequestNumber)")
+    }
 
     var payoutText: String {
         guard amount > 0 else { return "TBD" }
         return amount.formatted(.currency(code: currency).precision(.fractionLength(0)))
     }
+}
 
-    var riskScore: Int {
-        var score = priority.rank * 20
-        score += min(competitionCount, 30)
-        if status == .blocked { score += 40 }
-        if status == .paid || status == .merged { score -= 30 }
-        return max(0, score)
+@Model
+final class Claim {
+    @Attribute(.unique) var stableID: String
+    var bountyStableID: String
+    var statusRaw: String
+    var solverLogin: String?
+    var urlString: String?
+    var transferAmount: Int
+    var transferCurrency: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(stableID: String, bountyStableID: String, status: ClaimStatus, solverLogin: String? = nil, urlString: String? = nil, transferAmount: Int = 0, transferCurrency: String = "USD", createdAt: Date = Date(), updatedAt: Date = Date()) {
+        self.stableID = stableID
+        self.bountyStableID = bountyStableID
+        self.statusRaw = status.rawValue
+        self.solverLogin = solverLogin
+        self.urlString = urlString
+        self.transferAmount = transferAmount
+        self.transferCurrency = transferCurrency
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
     }
 
-    static func fromGitHubURL(_ text: String) -> Bounty? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed),
-              let host = url.host?.lowercased(),
-              host == "github.com" || host == "www.github.com"
-        else { return nil }
-
-        let parts = url.pathComponents.filter { $0 != "/" }
-        guard parts.count >= 4,
-              parts[2] == "issues" || parts[2] == "pull",
-              let number = Int(parts[3])
-        else { return nil }
-
-        return Bounty(
-            repoOwner: parts[0],
-            repoName: parts[1],
-            issueNumber: number,
-            title: "New bounty candidate",
-            amount: 0,
-            labels: ["Algora", "GitHub"],
-            notes: "Created from \(trimmed). Add payout, status, PR, and notes after triage."
-        )
+    var status: ClaimStatus {
+        get { ClaimStatus(rawValue: statusRaw) ?? .unknown }
+        set { statusRaw = newValue.rawValue }
     }
 }
 
-extension Bounty {
-    static let samples: [Bounty] = [
-        Bounty(repoOwner: "tscircuit", repoName: "kicad-component-converter", issueNumber: 114, title: "Four-sided KiCad symbol conversion regressions", amount: 50, status: .submitted, priority: .high, labels: ["Algora", "Bounty", "$50"], prURL: URL(string: "https://github.com/tscircuit/kicad-component-converter/pull/220"), notes: "Mergeable clean. Vercel, test, type-check, and format-check passed. PR has bounty-claim label.", competitionCount: 22, checkSummary: "All checks passed"),
-        Bounty(repoOwner: "Dokploy", repoName: "templates", issueNumber: 152, title: "Add production-ready app templates", amount: 1000, status: .review, priority: .high, labels: ["Algora", "Bounty", "$1000 pool"], prURL: URL(string: "https://github.com/Dokploy/templates/pull/883"), notes: "Main Dokploy template claim. Mergeable but review-blocked.", competitionCount: 19, checkSummary: "Preview and validation passed"),
-        Bounty(repoOwner: "Dokploy", repoName: "templates", issueNumber: 152, title: "Wallabag template claim", amount: 1000, status: .review, priority: .high, labels: ["Algora", "Bounty", "$1000 pool"], prURL: URL(string: "https://github.com/Dokploy/templates/pull/900"), notes: "Same bounty pool as the main template claim. Waiting on review.", competitionCount: 19, checkSummary: "Compose and metadata checks passed"),
-        Bounty(repoOwner: "amithmandassociates-oss", repoName: "hash-report-tool", issueNumber: 2, title: "Add SHA-3/Keccak reporting outputs", amount: 50, status: .submitted, priority: .medium, labels: ["Algora", "Bounty", "$50"], prURL: URL(string: "https://github.com/amithmandassociates-oss/hash-report-tool/pull/28"), notes: "No checks configured. Broad output support and system-console digest logging added.", competitionCount: 18, checkSummary: "No CI configured"),
-        Bounty(repoOwner: "getdozer", repoName: "dozer", issueNumber: 1659, title: "Support IN clause in streaming SQL", amount: 600, status: .submitted, priority: .medium, labels: ["Algora", "Bounty", "$600"], prURL: URL(string: "https://github.com/getdozer/dozer/pull/2495"), notes: "PR has bounty-claim label. No check runs reported by GitHub.", competitionCount: 6, checkSummary: "No checks reported"),
-        Bounty(repoOwner: "Feel-ix-343", repoName: "markdown-oxide", issueNumber: 269, title: "Markdown Oxide bounty claim", amount: 5, status: .watching, priority: .low, labels: ["Algora", "Bounty", "$5"], prURL: URL(string: "https://github.com/Feel-ix-343/markdown-oxide/pull/456"), notes: "Low payout and unclear payment signal. Keep only as a watch item.", competitionCount: 15, checkSummary: "No checks reported")
-    ]
+@Model
+final class PullRequest {
+    @Attribute(.unique) var stableID: String
+    var bountyStableID: String
+    var repoOwner: String
+    var repoName: String
+    var number: Int
+    var title: String
+    var authorLogin: String
+    var bodySummary: String
+    var htmlURLString: String
+    var stateRaw: String
+    var isDraft: Bool
+    var mergeableState: String
+    var headSHA: String?
+    var labelsText: String
+    var checkStateRaw: String
+    var latestComment: String
+    var latestMaintainerComment: String
+    var changedFiles: Int
+    var additions: Int
+    var deletions: Int
+    var hasDemoProof: Bool
+    var hasTests: Bool
+    var updatedAt: Date
+
+    init(snapshot: PullRequestSnapshot) {
+        stableID = snapshot.stableID
+        bountyStableID = snapshot.bountyStableID
+        repoOwner = snapshot.repoOwner
+        repoName = snapshot.repoName
+        number = snapshot.number
+        title = snapshot.title
+        authorLogin = snapshot.authorLogin
+        bodySummary = snapshot.bodySummary
+        htmlURLString = snapshot.htmlURLString
+        stateRaw = snapshot.state.rawValue
+        isDraft = snapshot.isDraft
+        mergeableState = snapshot.mergeableState
+        headSHA = snapshot.headSHA
+        labelsText = LineCodec.encode(snapshot.labels)
+        checkStateRaw = snapshot.checkState.rawValue
+        latestComment = snapshot.latestComment
+        latestMaintainerComment = snapshot.latestMaintainerComment
+        changedFiles = snapshot.changedFiles
+        additions = snapshot.additions
+        deletions = snapshot.deletions
+        hasDemoProof = snapshot.hasDemoProof
+        hasTests = snapshot.hasTests
+        updatedAt = snapshot.updatedAt
+    }
+
+    func apply(_ snapshot: PullRequestSnapshot) {
+        bountyStableID = snapshot.bountyStableID
+        repoOwner = snapshot.repoOwner
+        repoName = snapshot.repoName
+        number = snapshot.number
+        title = snapshot.title
+        authorLogin = snapshot.authorLogin
+        bodySummary = snapshot.bodySummary
+        htmlURLString = snapshot.htmlURLString
+        state = snapshot.state
+        isDraft = snapshot.isDraft
+        mergeableState = snapshot.mergeableState
+        headSHA = snapshot.headSHA
+        labels = snapshot.labels
+        checkState = snapshot.checkState
+        latestComment = snapshot.latestComment
+        latestMaintainerComment = snapshot.latestMaintainerComment
+        changedFiles = snapshot.changedFiles
+        additions = snapshot.additions
+        deletions = snapshot.deletions
+        hasDemoProof = snapshot.hasDemoProof
+        hasTests = snapshot.hasTests
+        updatedAt = snapshot.updatedAt
+    }
+
+    var state: PullRequestState {
+        get { PullRequestState(rawValue: stateRaw) ?? .unknown }
+        set { stateRaw = newValue.rawValue }
+    }
+
+    var checkState: CheckState {
+        get { CheckState(rawValue: checkStateRaw) ?? .unknown }
+        set { checkStateRaw = newValue.rawValue }
+    }
+
+    var labels: [String] {
+        get { LineCodec.decode(labelsText) }
+        set { labelsText = LineCodec.encode(newValue) }
+    }
+
+    var htmlURL: URL? { URL(string: htmlURLString) }
+}
+
+@Model
+final class GitHubIssue {
+    @Attribute(.unique) var stableID: String
+    var bountyStableID: String
+    var repoOwner: String
+    var repoName: String
+    var number: Int
+    var title: String
+    var bodySummary: String
+    var htmlURLString: String
+    var stateRaw: String
+    var labelsText: String
+    var latestComment: String
+    var latestBotComment: String
+    var hasAlgoraEvidence: Bool
+    var bountyAmount: Int
+    var requiresVideo: Bool
+    var hasRewardedSignal: Bool
+    var updatedAt: Date
+
+    init(snapshot: GitHubIssueSnapshot) {
+        stableID = snapshot.stableID
+        bountyStableID = snapshot.bountyStableID
+        repoOwner = snapshot.repoOwner
+        repoName = snapshot.repoName
+        number = snapshot.number
+        title = snapshot.title
+        bodySummary = snapshot.bodySummary
+        htmlURLString = snapshot.htmlURLString
+        stateRaw = snapshot.state.rawValue
+        labelsText = LineCodec.encode(snapshot.labels)
+        latestComment = snapshot.latestComment
+        latestBotComment = snapshot.latestBotComment
+        hasAlgoraEvidence = snapshot.hasAlgoraEvidence
+        bountyAmount = snapshot.bountyAmount
+        requiresVideo = snapshot.requiresVideo
+        hasRewardedSignal = snapshot.hasRewardedSignal
+        updatedAt = snapshot.updatedAt
+    }
+
+    func apply(_ snapshot: GitHubIssueSnapshot) {
+        bountyStableID = snapshot.bountyStableID
+        repoOwner = snapshot.repoOwner
+        repoName = snapshot.repoName
+        number = snapshot.number
+        title = snapshot.title
+        bodySummary = snapshot.bodySummary
+        htmlURLString = snapshot.htmlURLString
+        state = snapshot.state
+        labels = snapshot.labels
+        latestComment = snapshot.latestComment
+        latestBotComment = snapshot.latestBotComment
+        hasAlgoraEvidence = snapshot.hasAlgoraEvidence
+        bountyAmount = snapshot.bountyAmount
+        requiresVideo = snapshot.requiresVideo
+        hasRewardedSignal = snapshot.hasRewardedSignal
+        updatedAt = snapshot.updatedAt
+    }
+
+    var state: IssueState {
+        get { IssueState(rawValue: stateRaw) ?? .unknown }
+        set { stateRaw = newValue.rawValue }
+    }
+
+    var labels: [String] {
+        get { LineCodec.decode(labelsText) }
+        set { labelsText = LineCodec.encode(newValue) }
+    }
+}
+
+@Model
+final class RepoRuleSet {
+    @Attribute(.unique) var stableID: String
+    var bountyStableID: String
+    var repoOwner: String
+    var repoName: String
+    var codeOfConductSummary: String
+    var contributingSummary: String
+    var readmeSummary: String
+    var testCommandsText: String
+    var requiresDemoVideo: Bool
+    var assignmentRequired: Bool
+    var maintainerAssignmentRequired: Bool
+    var repoArchived: Bool
+    var updatedAt: Date
+
+    init(snapshot: RepoRuleSetSnapshot) {
+        stableID = snapshot.stableID
+        bountyStableID = snapshot.bountyStableID
+        repoOwner = snapshot.repoOwner
+        repoName = snapshot.repoName
+        codeOfConductSummary = snapshot.codeOfConductSummary
+        contributingSummary = snapshot.contributingSummary
+        readmeSummary = snapshot.readmeSummary
+        testCommandsText = LineCodec.encode(snapshot.testCommands)
+        requiresDemoVideo = snapshot.requiresDemoVideo
+        assignmentRequired = snapshot.assignmentRequired
+        maintainerAssignmentRequired = snapshot.maintainerAssignmentRequired
+        repoArchived = snapshot.repoArchived
+        updatedAt = snapshot.updatedAt
+    }
+
+    var testCommands: [String] {
+        get { LineCodec.decode(testCommandsText) }
+        set { testCommandsText = LineCodec.encode(newValue) }
+    }
+}
+
+@Model
+final class CompetitorPR {
+    @Attribute(.unique) var stableID: String
+    var bountyStableID: String
+    var number: Int
+    var authorLogin: String
+    var title: String
+    var htmlURLString: String
+    var stateRaw: String
+    var checkStateRaw: String
+    var changedFiles: Int
+    var additions: Int
+    var deletions: Int
+    var labelsText: String
+    var latestComment: String
+    var hasDemoProof: Bool
+    var hasMaintainerApproval: Bool
+    var updatedAt: Date
+
+    init(snapshot: CompetitorPRSnapshot) {
+        stableID = snapshot.stableID
+        bountyStableID = snapshot.bountyStableID
+        number = snapshot.number
+        authorLogin = snapshot.authorLogin
+        title = snapshot.title
+        htmlURLString = snapshot.htmlURLString
+        stateRaw = snapshot.state.rawValue
+        checkStateRaw = snapshot.checkState.rawValue
+        changedFiles = snapshot.changedFiles
+        additions = snapshot.additions
+        deletions = snapshot.deletions
+        labelsText = LineCodec.encode(snapshot.labels)
+        latestComment = snapshot.latestComment
+        hasDemoProof = snapshot.hasDemoProof
+        hasMaintainerApproval = snapshot.hasMaintainerApproval
+        updatedAt = snapshot.updatedAt
+    }
+
+    func apply(_ snapshot: CompetitorPRSnapshot) {
+        bountyStableID = snapshot.bountyStableID
+        number = snapshot.number
+        authorLogin = snapshot.authorLogin
+        title = snapshot.title
+        htmlURLString = snapshot.htmlURLString
+        state = snapshot.state
+        checkState = snapshot.checkState
+        changedFiles = snapshot.changedFiles
+        additions = snapshot.additions
+        deletions = snapshot.deletions
+        labels = snapshot.labels
+        latestComment = snapshot.latestComment
+        hasDemoProof = snapshot.hasDemoProof
+        hasMaintainerApproval = snapshot.hasMaintainerApproval
+        updatedAt = snapshot.updatedAt
+    }
+
+    var state: PullRequestState {
+        get { PullRequestState(rawValue: stateRaw) ?? .unknown }
+        set { stateRaw = newValue.rawValue }
+    }
+
+    var checkState: CheckState {
+        get { CheckState(rawValue: checkStateRaw) ?? .unknown }
+        set { checkStateRaw = newValue.rawValue }
+    }
+
+    var labels: [String] {
+        get { LineCodec.decode(labelsText) }
+        set { labelsText = LineCodec.encode(newValue) }
+    }
+}
+
+@Model
+final class AlertEvent {
+    @Attribute(.unique) var stableID: String
+    var bountyStableID: String?
+    var kindRaw: String
+    var title: String
+    var detail: String
+    var isRead: Bool
+    var createdAt: Date
+
+    init(snapshot: AlertSnapshot) {
+        stableID = snapshot.stableID
+        bountyStableID = snapshot.bountyStableID
+        kindRaw = snapshot.kind.rawValue
+        title = snapshot.title
+        detail = snapshot.detail
+        isRead = snapshot.isRead
+        createdAt = snapshot.createdAt
+    }
+
+    var kind: AlertKind {
+        get { AlertKind(rawValue: kindRaw) ?? .warning }
+        set { kindRaw = newValue.rawValue }
+    }
+}
+
+@Model
+final class RiskScoreSnapshot {
+    @Attribute(.unique) var stableID: String
+    var bountyStableID: String
+    var score: Int
+    var levelRaw: String
+    var factorsText: String
+    var nextAction: String
+    var createdAt: Date
+
+    init(stableID: String = UUID().uuidString, bountyStableID: String, score: Int, level: RiskLevel, factors: [String], nextAction: String, createdAt: Date = Date()) {
+        self.stableID = stableID
+        self.bountyStableID = bountyStableID
+        self.score = score
+        self.levelRaw = level.rawValue
+        self.factorsText = LineCodec.encode(factors)
+        self.nextAction = nextAction
+        self.createdAt = createdAt
+    }
+
+    var level: RiskLevel {
+        get { RiskLevel(rawValue: levelRaw) ?? .medium }
+        set { levelRaw = newValue.rawValue }
+    }
+
+    var factors: [String] {
+        get { LineCodec.decode(factorsText) }
+        set { factorsText = LineCodec.encode(newValue) }
+    }
+}
+
+struct TrackedBountySnapshot: Equatable {
+    var stableID: String
+    var id = UUID()
+    var source: BountySource
+    var repoOwner: String
+    var repoName: String
+    var issueNumber: Int
+    var linkedPullRequestNumber: Int?
+    var title: String
+    var issueBodySummary: String
+    var pullRequestSummary: String
+    var amount: Int
+    var currency = "USD"
+    var labels: [String]
+    var algoraEvidence: [String]
+    var rewardLinks: [String]
+    var workflowStatus: BountyWorkflowStatus
+    var issueState: IssueState
+    var claimStatus: ClaimStatus
+    var checkState: CheckState
+    var riskLevel: RiskLevel
+    var payoutChance: Int
+    var riskFactors: [String]
+    var nextAction: String
+    var latestMaintainerComment: String
+    var latestBotComment: String
+    var competitionCount: Int
+    var hasRewardedSignal: Bool
+    var requiresVideo: Bool
+    var hasDemoProof: Bool
+    var repoArchived: Bool
+    var assignedOnly: Bool
+    var userAppearsAssigned: Bool
+    var maintainerAssignmentRequired: Bool
+    var priorRejectedSignal: Bool
+    var hasClearVerification: Bool
+    var hasTests: Bool
+    var createdAt: Date
+    var updatedAt: Date
+    var lastRefreshedAt: Date?
+}
+
+struct PullRequestSnapshot: Equatable {
+    var stableID: String
+    var bountyStableID: String
+    var repoOwner: String
+    var repoName: String
+    var number: Int
+    var title: String
+    var authorLogin: String
+    var bodySummary: String
+    var htmlURLString: String
+    var state: PullRequestState
+    var isDraft: Bool
+    var mergeableState: String
+    var headSHA: String?
+    var labels: [String]
+    var checkState: CheckState
+    var latestComment: String
+    var latestMaintainerComment: String
+    var changedFiles: Int
+    var additions: Int
+    var deletions: Int
+    var hasDemoProof: Bool
+    var hasTests: Bool
+    var updatedAt: Date
+}
+
+struct GitHubIssueSnapshot: Equatable {
+    var stableID: String
+    var bountyStableID: String
+    var repoOwner: String
+    var repoName: String
+    var number: Int
+    var title: String
+    var bodySummary: String
+    var htmlURLString: String
+    var state: IssueState
+    var labels: [String]
+    var latestComment: String
+    var latestBotComment: String
+    var hasAlgoraEvidence: Bool
+    var bountyAmount: Int
+    var requiresVideo: Bool
+    var hasRewardedSignal: Bool
+    var updatedAt: Date
+}
+
+struct RepoRuleSetSnapshot: Equatable {
+    var stableID: String
+    var bountyStableID: String
+    var repoOwner: String
+    var repoName: String
+    var codeOfConductSummary: String
+    var contributingSummary: String
+    var readmeSummary: String
+    var testCommands: [String]
+    var requiresDemoVideo: Bool
+    var assignmentRequired: Bool
+    var maintainerAssignmentRequired: Bool
+    var repoArchived: Bool
+    var updatedAt: Date
+}
+
+struct CompetitorPRSnapshot: Equatable {
+    var stableID: String
+    var bountyStableID: String
+    var number: Int
+    var authorLogin: String
+    var title: String
+    var htmlURLString: String
+    var state: PullRequestState
+    var checkState: CheckState
+    var changedFiles: Int
+    var additions: Int
+    var deletions: Int
+    var labels: [String]
+    var latestComment: String
+    var hasDemoProof: Bool
+    var hasMaintainerApproval: Bool
+    var updatedAt: Date
+}
+
+
+struct ClaimSnapshot: Equatable {
+    var stableID: String
+    var bountyStableID: String
+    var status: ClaimStatus
+    var solverLogin: String?
+    var urlString: String?
+    var transferAmount: Int
+    var transferCurrency: String
+    var createdAt: Date
+    var updatedAt: Date
+}
+
+struct RiskSnapshotData: Equatable {
+    var stableID: String
+    var bountyStableID: String
+    var score: Int
+    var level: RiskLevel
+    var factors: [String]
+    var nextAction: String
+    var createdAt: Date
+}
+
+struct AlertSnapshot: Equatable {
+    var stableID: String
+    var bountyStableID: String?
+    var kind: AlertKind
+    var title: String
+    var detail: String
+    var isRead: Bool
+    var createdAt: Date
+}
+
+enum LineCodec {
+    static func encode(_ values: [String]) -> String {
+        values
+            .map { $0.replacingOccurrences(of: "\n", with: "\\n") }
+            .joined(separator: "\n")
+    }
+
+    static func decode(_ text: String) -> [String] {
+        text
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { String($0).replacingOccurrences(of: "\\n", with: "\n") }
+    }
 }

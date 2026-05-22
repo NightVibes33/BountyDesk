@@ -5,9 +5,9 @@ options:
     iOS: "26.0"
 settings:
   base:
-    SWIFT_VERSION: 5.10
+    SWIFT_VERSION: 6.2
     MARKETING_VERSION: 1.0
-    CURRENT_PROJECT_VERSION: 1
+    CURRENT_PROJECT_VERSION: 2
 targets:
   BountyDesk:
     type: application
@@ -20,3 +20,22 @@ targets:
         INFOPLIST_FILE: Sources/BountyDeskApp/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
+  BountyDeskTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/BountyDeskTests
+    dependencies:
+      - target: BountyDesk
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.bountydesk.tests
+schemes:
+  BountyDesk:
+    build:
+      targets:
+        BountyDesk: all
+        BountyDeskTests: [test]
+    test:
+      targets:
+        - BountyDeskTests
