@@ -243,8 +243,7 @@ enum BountyParsing {
     }
 
     static func hasAlgoraEvidence(labels: [String], body: String, comments: [String]) -> Bool {
-        let commentText = comments.joined(separator: "
-")
+        let commentText = comments.joined(separator: "\n")
         let normalized = commentText.lowercased()
         return normalized.contains("algora-pbc[bot]")
             && algoraBountyAmount(in: commentText) != nil
