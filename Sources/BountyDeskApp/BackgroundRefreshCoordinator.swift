@@ -36,17 +36,10 @@ final class BackgroundRefreshCoordinator: @unchecked Sendable {
     private func handle(task: BGAppRefreshTask?) {
         scheduleAppRefresh()
         guard let task else { return }
-        let work = Task {
-            let token = try? KeychainStore().read(.githubToken)
-            if let token, token.isEmpty == false {
-                _ = try? await GitHubClient().validateToken(token)
-            }
-            task.setTaskCompleted(success: true)
-        }
         task.expirationHandler = {
-            work.cancel()
             task.setTaskCompleted(success: false)
         }
+        task.setTaskCompleted(success: true)
     }
     #endif
 }
