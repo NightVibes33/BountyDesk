@@ -562,7 +562,7 @@ private struct AlertsView: View {
                             HStack {
                                 Label(alert.kind.rawValue, systemImage: alert.isRead ? "bell" : "bell.badge")
                                     .font(.caption.weight(.semibold))
-                                    .foregroundStyle(alert.isRead ? .secondary : .tint)
+                                    .foregroundStyle(alert.isRead ? Color.secondary : Color.accentColor)
                                 Spacer()
                                 Text(alert.createdAt, style: .relative)
                                     .font(.caption)
