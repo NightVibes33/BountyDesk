@@ -254,7 +254,7 @@ final class GitHubDeviceFlowClientTests: XCTestCase {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/login/device/code")
             XCTAssertEqual(request.httpMethod, "POST")
-            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            let body = request.testBodyString
             XCTAssertTrue(body.contains("client_id=Ov23li4ZD248FNrHQUia"))
             XCTAssertTrue(body.contains("public_repo"))
             XCTAssertFalse(body.lowercased().contains("client_secret"))
@@ -271,7 +271,7 @@ final class GitHubDeviceFlowClientTests: XCTestCase {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/login/oauth/access_token")
             XCTAssertEqual(request.httpMethod, "POST")
-            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            let body = request.testBodyString
             XCTAssertTrue(body.contains("client_id=Ov23li4ZD248FNrHQUia"))
             XCTAssertTrue(body.contains("device_code=device123"))
             XCTAssertTrue(body.contains("grant_type="))
@@ -351,4 +351,25 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+}
+
+private extension URLRequest {
+    var testBodyString: String {
+        if let httpBody {
+            return String(data: httpBody, encoding: .utf8) ?? ""
+        }
+        guard let httpBodyStream else { return "" }
+
+        httpBodyStream.open()
+        defer { httpBodyStream.close() }
+
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 1024)
+        while true {
+            let count = httpBodyStream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
 }
