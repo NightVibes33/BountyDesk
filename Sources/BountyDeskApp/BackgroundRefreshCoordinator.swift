@@ -3,7 +3,7 @@ import Foundation
 import BackgroundTasks
 #endif
 
-final class BackgroundRefreshCoordinator {
+final class BackgroundRefreshCoordinator: @unchecked Sendable {
     static let shared = BackgroundRefreshCoordinator()
     private let identifier = "com.example.bountydesk.refresh"
     private var didRegister = false
