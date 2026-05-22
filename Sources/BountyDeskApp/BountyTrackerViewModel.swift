@@ -466,9 +466,26 @@ final class BountyTrackerViewModel: ObservableObject {
     }
 
     private func insertAlert(kind: AlertKind, bountyStableID: String?, title: String, detail: String) {
-        guard let modelContext else { return }
+        guard let modelContext, shouldRecordAlert(kind) else { return }
         let snapshot = AlertSnapshot(stableID: "\(kind.rawValue):\(bountyStableID ?? "global"):\(Date().timeIntervalSinceReferenceDate)", bountyStableID: bountyStableID, kind: kind, title: title, detail: detail, isRead: false, createdAt: Date())
         modelContext.insert(AlertEvent(snapshot: snapshot))
+    }
+
+    private func shouldRecordAlert(_ kind: AlertKind) -> Bool {
+        let defaults = UserDefaults.standard
+        func enabled(_ key: String) -> Bool {
+            defaults.object(forKey: key) as? Bool ?? true
+        }
+        switch kind {
+        case .maintainerComment, .botStatus:
+            return enabled("notifyMaintainerComments")
+        case .checksFailed, .checksRecovered:
+            return enabled("notifyChecks")
+        case .claimStatusChanged, .payoutStatusChanged:
+            return enabled("notifyPayment")
+        default:
+            return true
+        }
     }
 
     private func deleteAll<T: PersistentModel>(_ type: T.Type) throws {

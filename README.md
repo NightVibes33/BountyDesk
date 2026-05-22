@@ -17,12 +17,12 @@ This build is no longer a seeded/sample tracker. It starts from real user data: 
 - Competition view with ethical improvement suggestions only.
 - Discover tab with org, repo, language, payout, competition, active/paid/video/assignment filters.
 - Alerts tab for refresh-detected status, check, maintainer, bot, claim, and payout changes.
-- Settings for token management, watched orgs, refresh interval, notification preferences, exports, and cache clearing.
+- Settings for token management, watched orgs, refresh interval, in-app alert preferences, exports, and cache clearing.
 - Debug/test mock fixtures are kept out of production startup data.
 
 ## Token Setup
 
-Use **Continue with GitHub Passkey** to start GitHub OAuth Device Flow. BountyDesk opens `https://github.com/login/device`, where iOS can offer the GitHub passkey saved in Passwords. After authorization, BountyDesk stores the returned GitHub OAuth token in Keychain.
+Use **Continue with GitHub Passkey** to start GitHub OAuth Device Flow. BountyDesk opens `https://github.com/login/device`, where iOS can offer the GitHub passkey saved in Passwords. After authorization, return to BountyDesk; the app resumes polling GitHub and stores the returned OAuth token in Keychain.
 
 The app embeds only the public GitHub OAuth client ID. It does not embed or use a GitHub OAuth client secret. Device Flow must be enabled on the OAuth app in GitHub settings.
 
@@ -56,8 +56,9 @@ The test target covers:
 - `/claim` and `@algora-pbc /claim` detection.
 - Linked issue extraction.
 - Algora evidence and bot/status parsing.
-- Bounty amount parsing, including `$4k` and USD strings.
+- Bounty amount and reward-link parsing, including `$4k`, USD strings, and Algora reward URLs.
 - Claim/payment status parsing.
 - Risk scoring.
 - Missing Algora token fallback.
 - Public Algora endpoint failure fallback during discovery.
+- Discover filter behavior for recency and configured minimum payout.
