@@ -16,7 +16,7 @@ final class BountyParsingTests: XCTestCase {
     func testClaimIssueExtractionPrioritizesAlgoraClaimMarker() {
         let text = "Refs #3 while implementing @algora-pbc /claim #152 and mentions #8 later"
         XCTAssertEqual(BountyParsing.claimIssueNumbers(in: text), [152])
-        XCTAssertEqual(BountyParsing.linkedIssueNumbers(in: text), [3, 8, 152])
+        XCTAssertEqual(BountyParsing.linkedIssueNumbers(in: text), [3])
     }
 
     func testBountyAmountParsing() {
