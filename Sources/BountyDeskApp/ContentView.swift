@@ -147,6 +147,9 @@ private struct GitHubDeviceLoginPanel: View {
                     .textSelection(.enabled)
             }
             LabeledContent("Access", value: authorization.scopeDescription)
+            Text(app.isFinishingGitHubDeviceLogin ? "Waiting for GitHub approval." : "Return here after approving GitHub to finish automatically.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             HStack {
                 Button {
                     if let url = authorization.verificationURL { openURL(url) }

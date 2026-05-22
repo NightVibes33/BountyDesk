@@ -88,6 +88,7 @@ final class BountyTrackerViewModel: ObservableObject {
         isFinishingGitHubDeviceLogin = true
         defer { isFinishingGitHubDeviceLogin = false }
         authError = nil
+        syncMessage = "Checking GitHub passkey login..."
         do {
             let token = try await deviceFlow.pollForAccessToken(authorization: authorization)
             await authenticateWithGitHubToken(token.accessToken, successPrefix: "GitHub passkey login complete")
@@ -95,6 +96,11 @@ final class BountyTrackerViewModel: ObservableObject {
         } catch {
             authError = error.localizedDescription
         }
+    }
+
+    func resumeGitHubDeviceLoginIfNeeded() async {
+        guard githubDeviceAuthorization != nil, isAuthenticated == false else { return }
+        await finishGitHubDeviceLogin()
     }
 
     func cancelGitHubDeviceLogin() {

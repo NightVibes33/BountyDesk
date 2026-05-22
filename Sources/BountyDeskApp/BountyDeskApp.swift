@@ -38,6 +38,9 @@ struct BountyDeskApp: App {
         }
         .modelContainer(modelContainer)
         .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await viewModel.resumeGitHubDeviceLoginIfNeeded() }
+            }
             if phase == .background {
                 BackgroundRefreshCoordinator.shared.scheduleAppRefresh()
             }
