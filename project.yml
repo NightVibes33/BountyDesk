@@ -1,0 +1,22 @@
+name: BountyDesk
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: 5.10
+    MARKETING_VERSION: 1.0
+    CURRENT_PROJECT_VERSION: 1
+targets:
+  BountyDesk:
+    type: application
+    platform: iOS
+    sources:
+      - Sources/BountyDeskApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.bountydesk
+        INFOPLIST_FILE: Sources/BountyDeskApp/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"

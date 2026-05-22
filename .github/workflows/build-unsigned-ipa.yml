@@ -1,0 +1,54 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: macos-26-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Validate plist
+        run: plutil -lint Sources/BountyDeskApp/Info.plist
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build unsigned archive
+        run: |
+          xcodebuild             -project BountyDesk.xcodeproj             -scheme BountyDesk             -configuration Release             -sdk iphoneos             -destination 'generic/platform=iOS'             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             archive             -archivePath build/BountyDesk.xcarchive
+
+      - name: Validate bundle metadata
+        run: |
+          APP=build/BountyDesk.xcarchive/Products/Applications/BountyDesk.app
+          executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Info.plist")
+          test -n "$executable"
+          test -x "$APP/$executable"
+          test -f "$APP/Assets.car"
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R build/BountyDesk.xcarchive/Products/Applications/BountyDesk.app build/Payload/
+          cd build
+          zip -qry BountyDesk-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BountyDesk-unsigned-ipa
+          path: build/BountyDesk-unsigned.ipa
