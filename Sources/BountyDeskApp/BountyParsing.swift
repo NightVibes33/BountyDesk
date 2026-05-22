@@ -26,6 +26,8 @@ struct AlgoraBountyVerification: Equatable {
 
 
 enum BountyParsing {
+    private static let algoraActors: Set<String> = ["algora-pbc", "algora-pbc[bot]"]
+
     static func containsClaimMarker(_ text: String) -> Bool {
         let normalized = text.lowercased()
         return normalized.contains("/claim")
@@ -50,14 +52,16 @@ enum BountyParsing {
         issue: GitHubIssueResponse,
         comments: [GitHubComment],
         repo: String,
+        claimEvidenceText: String = "",
+        officialEventEvidence: [String] = [],
         openPrsMentioningIssue: Int = 0,
         claimPrsCount: Int = 0,
         lastCheckedAt: Date = Date()
     ) -> AlgoraBountyVerification {
-        let algoraComments = comments.filter { $0.user.login.lowercased() == "algora-pbc[bot]" }
+        let algoraComments = comments.filter { algoraActors.contains($0.user.login.lowercased()) }
         let issueState: IssueState = issue.state.lowercased() == "closed" ? .closed : .open
 
-        guard algoraComments.isEmpty == false else {
+        guard algoraComments.isEmpty == false || officialEventEvidence.isEmpty == false else {
             return AlgoraBountyVerification(
                 source: .notAlgora,
                 verified: false,
@@ -72,18 +76,19 @@ enum BountyParsing {
                 issueState: issueState,
                 openPrsMentioningIssue: openPrsMentioningIssue,
                 claimPrsCount: claimPrsCount,
-                excludedReason: "No algora-pbc[bot] comment found",
+                excludedReason: "No Algora bot comment or official Algora event found",
                 lastCheckedAt: lastCheckedAt,
                 evidence: []
             )
         }
 
-        let algoraText = algoraComments.map(\.body).joined(separator: "\n")
+        let algoraText = (algoraComments.map(\.body) + officialEventEvidence).joined(separator: "\n")
+        let flowText = [algoraText, claimEvidenceText].joined(separator: "\n")
         let amount = algoraBountyAmount(in: algoraText)
-        let claimFlowSeen = algoraClaimFlowSeen(in: algoraText)
-        let rewardActionSeen = algoraRewardActionSeen(in: algoraText)
+        let claimFlowSeen = algoraClaimFlowSeen(in: flowText)
+        let rewardActionSeen = algoraRewardActionSeen(in: flowText)
         let alreadyRewarded = algoraAlreadyRewarded(in: algoraText)
-        let evidence = algoraComments.map { $0.body.trimmedSummary(limit: 700) }
+        let evidence = algoraComments.map { $0.body.trimmedSummary(limit: 700) } + officialEventEvidence
 
         guard amount != nil, claimFlowSeen else {
             return AlgoraBountyVerification(
@@ -100,7 +105,7 @@ enum BountyParsing {
                 issueState: issueState,
                 openPrsMentioningIssue: openPrsMentioningIssue,
                 claimPrsCount: claimPrsCount,
-                excludedReason: "Algora bot found, but bounty amount or claim flow missing",
+                excludedReason: "Algora evidence found, but bounty amount or claim flow missing",
                 lastCheckedAt: lastCheckedAt,
                 evidence: evidence
             )
@@ -128,8 +133,10 @@ enum BountyParsing {
 
     static func algoraBountyAmount(in text: String) -> Int? {
         let patterns = [
-            #"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kKmM]?)\s*(?:usd)?\s*bounty\b"#,
-            #"\bbounty\D{0,24}\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kKmM]?)"#
+            #"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kKmM]?)(?:[^A-Za-z0-9]{0,16})(?:usd)?(?:[^A-Za-z0-9]{0,16})bounty\b"#,
+            #"\bbounty\D{0,32}\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kKmM]?)"#,
+            #"\balgora[^\n$]{0,120}\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kKmM]?)"#,
+            #"\blabeled\s+(?:issue|pull request)\s+\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kKmM]?)\b"#
         ]
         for pattern in patterns {
             guard let match = firstMatch(in: text, pattern: pattern) else { continue }
@@ -171,9 +178,30 @@ enum BountyParsing {
 
     static func latestAlgoraBotComment(from comments: [GitHubComment]) -> String {
         comments
-            .filter { $0.user.login.lowercased() == "algora-pbc[bot]" }
+            .filter { algoraActors.contains($0.user.login.lowercased()) }
             .sorted { $0.createdAt > $1.createdAt }
             .first?.body.trimmedSummary(limit: 240) ?? ""
+    }
+
+    static func officialAlgoraEventEvidence(issueEvents: [GitHubIssueEvent], pullRequestEvents: [GitHubIssueEvent]) -> [String] {
+        let issueEvidence = officialAlgoraEventEvidence(from: issueEvents, scope: "issue")
+        let pullEvidence = officialAlgoraEventEvidence(from: pullRequestEvents, scope: "pull request")
+        return orderedUnique(issueEvidence + pullEvidence)
+    }
+
+    private static func officialAlgoraEventEvidence(from events: [GitHubIssueEvent], scope: String) -> [String] {
+        events.compactMap { event in
+            guard let actor = event.actor?.login.lowercased(), algoraActors.contains(actor) else { return nil }
+            guard let label = event.label?.name, isAlgoraEvidenceLabel(label) else { return nil }
+            return "\(event.actor?.login ?? "algora-pbc") \(event.event) \(scope) \(label)"
+        }
+    }
+
+    private static func isAlgoraEvidenceLabel(_ label: String) -> Bool {
+        let normalized = label.lowercased()
+        return normalized.contains("bounty")
+            || normalized.contains("claim")
+            || normalized.range(of: #"\$\s*[0-9]"#, options: .regularExpression) != nil
     }
 
     static func linkedIssueNumbers(in text: String) -> [Int] {
@@ -243,16 +271,18 @@ enum BountyParsing {
     }
 
     static func hasAlgoraEvidence(labels: [String], body: String, comments: [String]) -> Bool {
-        let commentText = comments.joined(separator: "\n")
-        let normalized = commentText.lowercased()
-        return normalized.contains("algora-pbc[bot]")
-            && algoraBountyAmount(in: commentText) != nil
-            && algoraClaimFlowSeen(in: commentText)
+        let evidenceText = (comments + labels + [body]).joined(separator: "\n")
+        let normalized = evidenceText.lowercased()
+        let officialAlgoraSeen = normalized.contains("algora-pbc")
+            || labels.contains { isAlgoraEvidenceLabel($0) }
+        return officialAlgoraSeen
+            && algoraBountyAmount(in: evidenceText) != nil
+            && algoraClaimFlowSeen(in: evidenceText)
     }
 
     static func algoraEvidence(labels: [String], body: String, comments: [String]) -> [String] {
         guard hasAlgoraEvidence(labels: labels, body: body, comments: comments) else { return [] }
-        return ["Verified Algora bounty", "Algora bot comment found", "Algora claim flow found"]
+        return ["Verified Algora bounty", "Official Algora evidence found", "Algora claim flow found"]
     }
 
     static func rewardLinks(in text: String) -> [String] {
@@ -368,8 +398,8 @@ enum BountyParsing {
         }
     }
 
-    private static func orderedUnique(_ values: [Int]) -> [Int] {
-        var seen = Set<Int>()
+    private static func orderedUnique<T: Hashable>(_ values: [T]) -> [T] {
+        var seen = Set<T>()
         return values.filter { seen.insert($0).inserted }
     }
 

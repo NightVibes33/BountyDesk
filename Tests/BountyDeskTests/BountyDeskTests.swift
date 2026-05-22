@@ -39,6 +39,38 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertTrue(verification.rewardActionSeen)
     }
 
+    func testAlgoraOnlyVerificationAcceptsLegacyAlgoraUserCommentWithClaimMarker() {
+        let verification = BountyParsing.classifyAlgoraOnly(
+            issue: Self.issue(body: "Plain issue text is not trusted."),
+            comments: [Self.comment(login: "algora-pbc", body: "💎 **amithm001** is offering a **$50** bounty for this issue. View and reward the bounty at `algora.io/amithmandassociates`.")],
+            repo: "org/repo",
+            claimEvidenceText: "@algora-pbc /claim #2"
+        )
+        XCTAssertEqual(verification.source, .algora)
+        XCTAssertTrue(verification.verified)
+        XCTAssertEqual(verification.amountUsd, 50)
+        XCTAssertTrue(verification.algoraBotSeen)
+        XCTAssertTrue(verification.claimFlowSeen)
+    }
+
+    func testAlgoraOnlyVerificationAcceptsOfficialAlgoraLabelEvents() {
+        let verification = BountyParsing.classifyAlgoraOnly(
+            issue: Self.issue(body: "Algora managed template bounty."),
+            comments: [],
+            repo: "org/repo",
+            claimEvidenceText: "/claim #152",
+            officialEventEvidence: [
+                "algora-pbc[bot] labeled issue 💎 Bounty",
+                "algora-pbc[bot] labeled issue $1K",
+                "algora-pbc[bot] labeled pull request 🙋 Bounty claim"
+            ]
+        )
+        XCTAssertEqual(verification.source, .algora)
+        XCTAssertTrue(verification.verified)
+        XCTAssertEqual(verification.amountUsd, 1_000)
+        XCTAssertTrue(verification.claimFlowSeen)
+    }
+
     func testAlgoraOnlyVerificationExcludesManualPayoutSignalsWithoutBot() {
         let cases = [
             "Gitcoin task with payment wallet and USDC on Arbitrum",
@@ -56,7 +88,7 @@ final class BountyParsingTests: XCTestCase {
             XCTAssertEqual(verification.source, .notAlgora, body)
             XCTAssertFalse(verification.verified, body)
             XCTAssertFalse(verification.algoraBotSeen, body)
-            XCTAssertEqual(verification.excludedReason, "No algora-pbc[bot] comment found", body)
+            XCTAssertEqual(verification.excludedReason, "No Algora bot comment or official Algora event found", body)
         }
     }
 
@@ -69,7 +101,7 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertEqual(verification.source, .notAlgora)
         XCTAssertFalse(verification.verified)
         XCTAssertTrue(verification.algoraBotSeen)
-        XCTAssertEqual(verification.excludedReason, "Algora bot found, but bounty amount or claim flow missing")
+        XCTAssertEqual(verification.excludedReason, "Algora evidence found, but bounty amount or claim flow missing")
     }
 
 
@@ -424,6 +456,67 @@ final class GitHubClientTests: XCTestCase {
         XCTAssertEqual(result.activeClaimPullRequestCount, 0)
         XCTAssertEqual(result.skippedPullRequestCount, 1)
         XCTAssertTrue(result.bounties.isEmpty)
+    }
+
+    func testRefreshFindsBountyFromOfficialAlgoraLabelEvents() async {
+        MockURLProtocol.handler = { request in
+            let path = request.url!.path
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+            let body: String
+            let status: Int
+            switch path {
+            case "/user":
+                status = 200
+                body = #"{"login":"tester","avatar_url":null,"html_url":"https://github.com/tester"}"#
+            case "/search/issues" where query.contains("/claim"):
+                status = 200
+                body = #"{"total_count":1,"incomplete_results":false,"items":[{"url":"https://api.github.com/repos/org/repo/issues/10","repository_url":"https://api.github.com/repos/org/repo","html_url":"https://github.com/org/repo/pull/10","number":10,"title":"Claim bounty","body":"/claim #42","state":"open","labels":[{"name":"🙋 Bounty claim"}],"user":{"login":"tester","avatar_url":null,"html_url":"https://github.com/tester","type":"User"},"comments":0,"updated_at":"2026-05-22T04:00:00Z","created_at":"2026-05-22T03:00:00Z","pull_request":{"url":"https://api.github.com/repos/org/repo/pulls/10","html_url":"https://github.com/org/repo/pull/10","merged_at":null}}]}"#
+            case "/search/issues":
+                status = 200
+                body = #"{"total_count":0,"incomplete_results":false,"items":[]}"#
+            case "/repos/org/repo/pulls/10":
+                status = 200
+                body = #"{"html_url":"https://github.com/org/repo/pull/10","number":10,"state":"open","title":"Claim bounty","body":"/claim #42\n\nTests: npm test","draft":false,"merged_at":null,"mergeable":true,"mergeable_state":"clean","user":{"login":"tester","avatar_url":null,"html_url":"https://github.com/tester","type":"User"},"labels":[{"name":"🙋 Bounty claim"}],"head":{"sha":"abc"},"base":{"sha":"base"},"changed_files":2,"additions":20,"deletions":3,"updated_at":"2026-05-22T04:00:00Z"}"#
+            case "/repos/org/repo/issues/10/comments", "/repos/org/repo/issues/42/comments":
+                status = 200
+                body = "[]"
+            case "/repos/org/repo/issues/10/events":
+                status = 200
+                body = #"[{"event":"labeled","actor":{"login":"algora-pbc[bot]","avatar_url":null,"html_url":"https://github.com/apps/algora-pbc","type":"Bot"},"label":{"name":"🙋 Bounty claim"},"created_at":"2026-05-22T03:30:00Z"}]"#
+            case "/repos/org/repo/issues/42":
+                status = 200
+                body = #"{"html_url":"https://github.com/org/repo/issues/42","number":42,"state":"open","title":"Template bounty","body":"Algora manages this template bounty.","labels":[{"name":"documentation"}],"user":{"login":"maintainer","avatar_url":null,"html_url":"https://github.com/maintainer","type":"User"},"assignees":[],"updated_at":"2026-05-22T02:00:00Z","closed_at":null}"#
+            case "/repos/org/repo/issues/42/events":
+                status = 200
+                body = #"[{"event":"labeled","actor":{"login":"algora-pbc[bot]","avatar_url":null,"html_url":"https://github.com/apps/algora-pbc","type":"Bot"},"label":{"name":"💎 Bounty"},"created_at":"2026-05-22T02:10:00Z"},{"event":"labeled","actor":{"login":"algora-pbc[bot]","avatar_url":null,"html_url":"https://github.com/apps/algora-pbc","type":"Bot"},"label":{"name":"$1K"},"created_at":"2026-05-22T02:11:00Z"}]"#
+            case "/repos/org/repo":
+                status = 200
+                body = #"{"full_name":"org/repo","archived":false,"default_branch":"main"}"#
+            case "/repos/org/repo/commits/abc/check-runs":
+                status = 200
+                body = #"{"total_count":0,"check_runs":[]}"#
+            case "/repos/org/repo/commits/abc/status":
+                status = 200
+                body = #"{"state":"success","statuses":[]}"#
+            default:
+                status = path.contains("/contents/") ? 404 : 500
+                body = #"{"message":"not found"}"#
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, body.data(using: .utf8)!)
+        }
+        let session = Self.mockSession()
+        let service = BountyTrackerService(
+            github: GitHubClient(session: session),
+            algoraPublic: AlgoraPublicClient(session: session),
+            riskScoring: RiskScoringService()
+        )
+        let result = await service.refreshCurrentBounties(githubToken: "secret", algoraToken: nil, watchedOrgs: [])
+        XCTAssertEqual(result.activeClaimPullRequestCount, 1)
+        XCTAssertEqual(result.bounties.count, 1)
+        XCTAssertEqual(result.bounties[0].issueNumber, 42)
+        XCTAssertEqual(result.bounties[0].linkedPullRequestNumber, 10)
+        XCTAssertEqual(result.bounties[0].amount, 1_000)
+        XCTAssertTrue(result.bounties[0].algoraEvidence.contains("algora-pbc[bot] labeled issue $1K"))
     }
 
     func testRecentAuthoredPullRequestSearchUsesBroadOpenClosedQueries() async throws {

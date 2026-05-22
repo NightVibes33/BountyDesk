@@ -90,6 +90,10 @@ struct GitHubClient {
         try await request("/repos/\(owner)/\(repo)/issues/\(number)/comments?per_page=100", token: token)
     }
 
+    func issueEvents(owner: String, repo: String, number: Int, token: String?) async throws -> [GitHubIssueEvent] {
+        try await request("/repos/\(owner)/\(repo)/issues/\(number)/events?per_page=100", token: token)
+    }
+
     func pullRequestComments(owner: String, repo: String, number: Int, token: String?) async throws -> [GitHubComment] {
         try await request("/repos/\(owner)/\(repo)/pulls/\(number)/comments?per_page=100", token: token)
     }
@@ -291,6 +295,13 @@ struct GitHubComment: Decodable, Equatable {
     let htmlUrl: String?
     let createdAt: Date
     let updatedAt: Date
+}
+
+struct GitHubIssueEvent: Decodable, Equatable {
+    let event: String
+    let actor: GitHubUserSummary?
+    let label: GitHubLabel?
+    let createdAt: Date?
 }
 
 struct GitHubRepositoryResponse: Decodable, Equatable {

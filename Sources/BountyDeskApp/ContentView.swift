@@ -519,7 +519,7 @@ private struct BountyListView: View {
                     .listRowBackground(Color.clear)
 
                     if filteredBounties.isEmpty {
-                        ContentUnavailableView("No Verified Algora Bounty PRs", systemImage: "tray", description: Text("Excluded issues need an algora-pbc[bot] comment with amount and claim flow."))
+                        ContentUnavailableView("No Verified Algora Bounty PRs", systemImage: "tray", description: Text("Excluded issues need official Algora evidence with amount and claim flow."))
                             .listRowBackground(Color.clear)
                     } else {
                         ForEach(filteredBounties, id: \.stableID) { bounty in
@@ -1122,7 +1122,7 @@ private struct AddBountyView: View {
                     }
                 }
                 Section("Import") {
-                    Text("Manual payout, Gitcoin, crypto wallet, PayPal, BTC, sats, USDC, and generic bounty URLs are excluded. BountyDesk only tracks GitHub issues verified by algora-pbc[bot] with amount and claim flow.")
+                    Text("Manual payout, Gitcoin, crypto wallet, PayPal, BTC, sats, USDC, and generic bounty URLs are excluded. BountyDesk only tracks GitHub issues verified by official Algora evidence with amount and claim flow.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -1137,7 +1137,7 @@ private struct AddBountyView: View {
                         if app.addManualURL(urlText) {
                             dismiss()
                         } else {
-                            errorMessage = "Not Algora. Excluded: no Algora bot / no Algora claim flow."
+                            errorMessage = "Not Algora. Excluded: no official Algora evidence / no Algora claim flow."
                         }
                     }
                 }

@@ -5,7 +5,11 @@ struct AlgoraPublicClient {
     var session: URLSession = .shared
 
     func bounties(org: String, limit: Int = 100) async throws -> [AlgoraBountyDTO] {
-        try await requestOrgCollection(path: "/api/orgs/\(org)/bounties", limit: limit)
+        do {
+            return try await requestOrgCollection(path: "/api/orgs/\(org)/bounties", limit: limit)
+        } catch {
+            return try await requestTRPCBountyList(org: org, limit: limit)
+        }
     }
 
     func claims(org: String, limit: Int = 100) async throws -> [AlgoraClaimDTO] {
@@ -22,6 +26,29 @@ struct AlgoraPublicClient {
         components?.path = path
         components?.queryItems = [URLQueryItem(name: "limit", value: "\(limit)")]
         return components?.url
+    }
+
+    private func requestTRPCBountyList(org: String, limit: Int) async throws -> [AlgoraBountyDTO] {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/api/trpc/bounty.list"
+        let input: [String: Any] = ["0": ["json": ["org": org, "limit": limit]]]
+        let data = try JSONSerialization.data(withJSONObject: input, options: [])
+        let inputText = String(data: data, encoding: .utf8) ?? "{}"
+        components?.queryItems = [
+            URLQueryItem(name: "batch", value: "1"),
+            URLQueryItem(name: "input", value: inputText)
+        ]
+        guard let url = components?.url else { throw AlgoraAPIError.invalidURL }
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("BountyDesk/1.0", forHTTPHeaderField: "User-Agent")
+        let (dataResponse, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw AlgoraAPIError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            throw AlgoraAPIError.httpStatus(http.statusCode, String(data: dataResponse, encoding: .utf8) ?? "")
+        }
+        let envelope = try JSONDecoder.algora.decode([AlgoraTRPCBatchEnvelope<AlgoraBountyDTO>].self, from: dataResponse)
+        return envelope.first?.result?.data?.json?.items ?? []
     }
 
     func requestCollection<T: Decodable>(url: URL, token: String?) async throws -> [T] {
@@ -104,6 +131,18 @@ enum AlgoraAPIError: LocalizedError, Equatable {
 
 struct AlgoraCollectionEnvelope<T: Decodable>: Decodable {
     let items: [T]
+}
+
+struct AlgoraTRPCBatchEnvelope<T: Decodable>: Decodable {
+    let result: AlgoraTRPCResult<T>?
+}
+
+struct AlgoraTRPCResult<T: Decodable>: Decodable {
+    let data: AlgoraTRPCData<T>?
+}
+
+struct AlgoraTRPCData<T: Decodable>: Decodable {
+    let json: AlgoraCollectionEnvelope<T>?
 }
 
 struct AlgoraBountyDTO: Decodable, Equatable {

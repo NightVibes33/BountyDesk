@@ -204,9 +204,9 @@ final class BountyTrackerViewModel: ObservableObject {
             }
             try apply(result: result, previousBounties: previous)
             let count = result.bounties.count
-            let scanSummary = "\(result.scannedPullRequestCount) PRs checked for verified Algora bot evidence (\(result.claimPullRequestCount) claim candidates, \(result.linkedIssueCheckCount) linked issue checks)"
+            let scanSummary = "\(result.scannedPullRequestCount) PRs checked for verified Algora evidence (\(result.claimPullRequestCount) claim candidates, \(result.linkedIssueCheckCount) linked issue checks)"
             if count == 0 {
-                syncMessage = "Refresh finished. Checked \(scanSummary) but found no verified Algora bounties. Skipped \(result.skippedPullRequestCount) PRs without algora-pbc[bot], amount, and claim flow."
+                syncMessage = "Refresh finished. Checked \(scanSummary) but found no verified Algora bounties. Skipped \(result.skippedPullRequestCount) PRs without official Algora amount evidence and claim flow."
             } else {
                 syncMessage = "Refresh finished. Updated \(count) verified Algora bounty PRs from \(scanSummary)."
             }
@@ -245,7 +245,7 @@ final class BountyTrackerViewModel: ObservableObject {
 
     func addManualURL(_ text: String) -> Bool {
         guard let snapshot = service.manualSnapshot(from: text) else {
-            syncMessage = "Excluded: manual URLs are not tracked unless a refresh verifies algora-pbc[bot], amount, and claim flow."
+            syncMessage = "Excluded: manual URLs are not tracked unless a refresh verifies official Algora amount evidence and claim flow."
             return false
         }
         do {

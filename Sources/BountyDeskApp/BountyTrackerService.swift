@@ -103,8 +103,10 @@ struct BountyTrackerService {
         guard let slug = GitHubClient.repositorySlug(from: item.repositoryUrl) else { throw GitHubAPIError.invalidURL }
         async let prTask = github.pullRequest(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
         async let prIssueCommentsTask = github.issueComments(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
+        async let prIssueEventsTask = github.issueEvents(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
         let pr = try await prTask
         let prIssueComments = (try? await prIssueCommentsTask) ?? []
+        let prIssueEvents = (try? await prIssueEventsTask) ?? []
         let prBody = pr.body ?? item.body ?? ""
         let prEvidenceText = prBody + "\n" + prIssueComments.map(\.body).joined(separator: "\n")
         let claimIssues = BountyParsing.claimIssueNumbers(in: prEvidenceText)
@@ -112,13 +114,19 @@ struct BountyTrackerService {
         let issueNumber = (claimIssues + linkedIssues).first ?? item.number
         async let issueTask = github.issue(owner: slug.owner, repo: slug.repo, number: issueNumber, token: token)
         async let issueCommentsTask = github.issueComments(owner: slug.owner, repo: slug.repo, number: issueNumber, token: token)
+        async let issueEventsTask = github.issueEvents(owner: slug.owner, repo: slug.repo, number: issueNumber, token: token)
         let issue = (try? await issueTask) ?? fallbackIssue(from: item, owner: slug.owner, repo: slug.repo, number: issueNumber)
         let issueComments = (try? await issueCommentsTask) ?? []
+        let issueEvents = (try? await issueEventsTask) ?? []
         let labels = Array(Set((item.labels + (pr.labels ?? []) + issue.labels).map(\.name))).sorted()
+        let officialAlgoraEvidence = BountyParsing.officialAlgoraEventEvidence(issueEvents: issueEvents, pullRequestEvents: prIssueEvents)
+        let claimEvidenceText = ([prEvidenceText] + labels + officialAlgoraEvidence).joined(separator: "\n")
         let verification = BountyParsing.classifyAlgoraOnly(
             issue: issue,
             comments: issueComments,
             repo: "\(slug.owner)/\(slug.repo)",
+            claimEvidenceText: claimEvidenceText,
+            officialEventEvidence: officialAlgoraEvidence,
             claimPrsCount: claimIssues.count
         )
         guard verification.verified else { throw BountyTrackerServiceError.noBountyEvidence }
@@ -134,7 +142,7 @@ struct BountyTrackerService {
         let issueState = verification.issueState
         let latestMaintainer = BountyParsing.latestMaintainerComment(from: allComments, excluding: username)
         let latestBot = BountyParsing.latestAlgoraBotComment(from: issueComments)
-        let evidence = ["Verified Algora bounty", "Algora bot comment found", "Algora claim flow found"] + verification.evidence
+        let evidence = ["Verified Algora bounty", "Official Algora evidence found", "Algora claim flow found"] + verification.evidence
         let rewardLinks = BountyParsing.rewardLinks(in: algoraTextCorpus)
 
         async let repositoryTask = github.repository(owner: slug.owner, repo: slug.repo, token: token)
@@ -338,10 +346,14 @@ struct BountyTrackerService {
             closedAt: nil
         )
         let issueComments = (try? await github.issueComments(owner: owner, repo: repo, number: number, token: githubToken)) ?? []
+        let issueEvents = (try? await github.issueEvents(owner: owner, repo: repo, number: number, token: githubToken)) ?? []
+        let officialAlgoraEvidence = BountyParsing.officialAlgoraEventEvidence(issueEvents: issueEvents, pullRequestEvents: [])
         let verification = BountyParsing.classifyAlgoraOnly(
             issue: issue,
             comments: issueComments,
             repo: repoSlug,
+            claimEvidenceText: [task.body, issue.body].compactMap { $0 }.joined(separator: "\n"),
+            officialEventEvidence: officialAlgoraEvidence,
             claimPrsCount: dto.claims?.count ?? 0
         )
         guard verification.verified else { return nil }
@@ -387,7 +399,7 @@ struct BountyTrackerService {
             pullRequestSummary: "",
             amount: amount,
             labels: issue.labels.map(\.name),
-            algoraEvidence: ["Verified Algora bounty", "Algora bot comment found", "Algora claim flow found"] + verification.evidence,
+            algoraEvidence: ["Verified Algora bounty", "Official Algora evidence found", "Algora claim flow found"] + verification.evidence,
             rewardLinks: [task.url].compactMap { $0 } + BountyParsing.rewardLinks(in: algoraText),
             workflowStatus: issueState == .open ? .watching : .lost,
             issueState: issueState,
@@ -422,8 +434,16 @@ struct BountyTrackerService {
         async let issueCommentsTask = github.issueComments(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
         let issue = (try? await issueTask) ?? fallbackIssue(from: item, owner: slug.owner, repo: slug.repo, number: item.number)
         let issueComments = (try? await issueCommentsTask) ?? []
+        let issueEvents = (try? await github.issueEvents(owner: slug.owner, repo: slug.repo, number: item.number, token: token)) ?? []
         let repoSlug = "\(slug.owner)/\(slug.repo)"
-        let verification = BountyParsing.classifyAlgoraOnly(issue: issue, comments: issueComments, repo: repoSlug)
+        let officialAlgoraEvidence = BountyParsing.officialAlgoraEventEvidence(issueEvents: issueEvents, pullRequestEvents: [])
+        let verification = BountyParsing.classifyAlgoraOnly(
+            issue: issue,
+            comments: issueComments,
+            repo: repoSlug,
+            claimEvidenceText: issue.body ?? item.body ?? "",
+            officialEventEvidence: officialAlgoraEvidence
+        )
         guard verification.verified else { return nil }
 
         let labels = Array(Set((item.labels + issue.labels).map(\.name))).sorted()
@@ -464,7 +484,7 @@ struct BountyTrackerService {
             pullRequestSummary: "",
             amount: amount,
             labels: labels,
-            algoraEvidence: ["Verified Algora bounty", "Algora bot comment found", "Algora claim flow found"] + verification.evidence,
+            algoraEvidence: ["Verified Algora bounty", "Official Algora evidence found", "Algora claim flow found"] + verification.evidence,
             rewardLinks: BountyParsing.rewardLinks(in: algoraText),
             workflowStatus: verification.issueState == .open ? .watching : .lost,
             issueState: verification.issueState,
@@ -703,7 +723,7 @@ enum BountyTrackerServiceError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .noBountyEvidence: return "Not Algora: no algora-pbc[bot] amount and claim flow was found on the linked issue."
+        case .noBountyEvidence: return "Not Algora: no official Algora amount evidence and claim flow was found for the linked issue."
         }
     }
 }
