@@ -62,24 +62,35 @@ private struct MainTabs: View {
 
 private struct LoginView: View {
     @EnvironmentObject private var app: BountyTrackerViewModel
+    @Environment(\.openURL) private var openURL
     @State private var githubToken = ""
     @State private var algoraToken = ""
-    @State private var showOAuthNote = false
+    @State private var includePrivateRepositories = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("GitHub") {
                     Button {
-                        showOAuthNote = true
+                        Task {
+                            if let url = await app.startGitHubDeviceLogin(includePrivateRepositories: includePrivateRepositories) {
+                                openURL(url)
+                            }
+                        }
                     } label: {
-                        Label("Continue with GitHub", systemImage: "person.crop.circle.badge.checkmark")
+                        Label(app.isStartingGitHubDeviceLogin ? "Preparing GitHub" : "Continue with GitHub Passkey", systemImage: "key.horizontal")
                     }
-                    if showOAuthNote {
-                        Text("GitHub OAuth needs a backend token exchange, so this build uses personal access token entry as the reliable path and never embeds a client secret.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                    .disabled(app.isStartingGitHubDeviceLogin || app.isFinishingGitHubDeviceLogin)
+
+                    Toggle("Include private repositories", isOn: $includePrivateRepositories)
+                    Text(includePrivateRepositories ? "GitHub will request private and public repository read access." : "GitHub will request public repository read access.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    if let authorization = app.githubDeviceAuthorization {
+                        GitHubDeviceLoginPanel(authorization: authorization)
                     }
+
                     SecureField("GitHub personal access token", text: $githubToken)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -120,6 +131,44 @@ private struct LoginView: View {
             }
             .navigationTitle("BountyDesk")
         }
+    }
+}
+
+private struct GitHubDeviceLoginPanel: View {
+    @EnvironmentObject private var app: BountyTrackerViewModel
+    @Environment(\.openURL) private var openURL
+    let authorization: GitHubDeviceAuthorization
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LabeledContent("Code") {
+                Text(authorization.userCode)
+                    .font(.system(.title3, design: .monospaced).weight(.semibold))
+                    .textSelection(.enabled)
+            }
+            LabeledContent("Access", value: authorization.scopeDescription)
+            HStack {
+                Button {
+                    if let url = authorization.verificationURL { openURL(url) }
+                } label: {
+                    Label("Open GitHub", systemImage: "safari")
+                }
+                Button {
+                    app.copyToClipboard(authorization.userCode)
+                } label: {
+                    Label("Copy Code", systemImage: "doc.on.doc")
+                }
+            }
+            Button {
+                Task { await app.finishGitHubDeviceLogin() }
+            } label: {
+                Label(app.isFinishingGitHubDeviceLogin ? "Waiting for GitHub" : "Finish Sign In", systemImage: "checkmark.circle")
+            }
+            .disabled(app.isFinishingGitHubDeviceLogin)
+            Button("Cancel", role: .cancel) { app.cancelGitHubDeviceLogin() }
+        }
+        .font(.subheadline)
+        .padding(.vertical, 4)
     }
 }
 

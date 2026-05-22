@@ -244,6 +244,52 @@ final class GitHubClientTests: XCTestCase {
     }
 }
 
+final class GitHubDeviceFlowClientTests: XCTestCase {
+    override func tearDown() {
+        MockURLProtocol.handler = nil
+        super.tearDown()
+    }
+
+    func testDeviceCodeRequestUsesClientIDAndNoSecret() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/login/device/code")
+            XCTAssertEqual(request.httpMethod, "POST")
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            XCTAssertTrue(body.contains("client_id=Ov23li4ZD248FNrHQUia"))
+            XCTAssertTrue(body.contains("public_repo"))
+            XCTAssertFalse(body.lowercased().contains("client_secret"))
+            let json = #"{"device_code":"device123","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":0}"#.data(using: .utf8)!
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+        }
+        let authorization = try await GitHubDeviceFlowClient(session: GitHubClientTests.mockSession()).requestDeviceCode(includePrivateRepositories: false)
+        XCTAssertEqual(authorization.userCode, "ABCD-EFGH")
+        XCTAssertEqual(authorization.verificationURL?.absoluteString, "https://github.com/login/device")
+        XCTAssertEqual(authorization.scopeDescription, "Public repositories")
+    }
+
+    func testDeviceFlowPollReturnsAccessTokenWithoutSecret() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/login/oauth/access_token")
+            XCTAssertEqual(request.httpMethod, "POST")
+            let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            XCTAssertTrue(body.contains("client_id=Ov23li4ZD248FNrHQUia"))
+            XCTAssertTrue(body.contains("device_code=device123"))
+            XCTAssertTrue(body.contains("grant_type="))
+            XCTAssertTrue(body.contains("device_code"))
+            XCTAssertFalse(body.lowercased().contains("client_secret"))
+            let json = #"{"access_token":"gho_mock","token_type":"bearer","scope":"public_repo,read:user"}"#.data(using: .utf8)!
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+        }
+        let authorization = GitHubDeviceAuthorization(
+            response: GitHubDeviceAuthorizationResponse(deviceCode: "device123", userCode: "ABCD-EFGH", verificationUri: "https://github.com/login/device", verificationUriComplete: nil, expiresIn: 900, interval: 0),
+            includePrivateRepositories: false
+        )
+        let token = try await GitHubDeviceFlowClient(session: GitHubClientTests.mockSession()).pollForAccessToken(authorization: authorization)
+        XCTAssertEqual(token.accessToken, "gho_mock")
+        XCTAssertEqual(token.tokenType, "bearer")
+    }
+}
+
 final class AlgoraFallbackTests: XCTestCase {
     override func tearDown() {
         MockURLProtocol.handler = nil

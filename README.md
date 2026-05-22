@@ -6,7 +6,7 @@ This build is no longer a seeded/sample tracker. It starts from real user data: 
 
 ## Features
 
-- GitHub token sign-in with `/user` validation.
+- GitHub passkey-capable Device Flow sign-in plus GitHub token sign-in with `/user` validation.
 - Keychain token storage; tokens are never stored in SwiftData, exported, or logged.
 - Optional Algora API token mode that never blocks GitHub-only tracking.
 - SwiftData persistence for accounts, watched orgs, bounties, claims, PRs, issues, repo rules, competitor PRs, alerts, and risk snapshots.
@@ -22,9 +22,11 @@ This build is no longer a seeded/sample tracker. It starts from real user data: 
 
 ## Token Setup
 
-Use a GitHub personal access token with public repo read access for public bounty tracking. Add private repo read access only if you want BountyDesk to track private repositories.
+Use **Continue with GitHub Passkey** to start GitHub OAuth Device Flow. BountyDesk opens `https://github.com/login/device`, where iOS can offer the GitHub passkey saved in Passwords. After authorization, BountyDesk stores the returned GitHub OAuth token in Keychain.
 
-GitHub OAuth is intentionally not completed in-app without a backend token exchange because an iOS app must not embed a GitHub client secret. The app shows the OAuth entry point but uses token entry as the reliable path for this standalone SideStore/AltStore build.
+The app embeds only the public GitHub OAuth client ID. It does not embed or use a GitHub OAuth client secret. Device Flow must be enabled on the OAuth app in GitHub settings.
+
+You can still paste a GitHub personal access token. Use public repo read access for public bounty tracking. Add private repo read access only if you want BountyDesk to track private repositories.
 
 Most users do not need an Algora API token. If an Algora token is missing or an Algora endpoint fails, BountyDesk continues with GitHub and public data.
 
@@ -49,6 +51,7 @@ The workflow generates the Xcode project with XcodeGen, runs unit tests, archive
 The test target covers:
 
 - GitHub token validation request behavior.
+- GitHub OAuth Device Flow requests and token polling without a client secret.
 - PR search parsing and deduping.
 - `/claim` and `@algora-pbc /claim` detection.
 - Linked issue extraction.

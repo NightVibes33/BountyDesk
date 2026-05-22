@@ -16,12 +16,16 @@ final class BountyTrackerViewModel: ObservableObject {
     @Published var authError: String?
     @Published var syncMessage: String?
     @Published var warnings: [String] = []
+    @Published var githubDeviceAuthorization: GitHubDeviceAuthorization?
+    @Published var isStartingGitHubDeviceLogin = false
+    @Published var isFinishingGitHubDeviceLogin = false
     @Published var discoveredBounties: [TrackedBountySnapshot] = []
     @Published var discoverFilters = DiscoverFilters()
 
     private var modelContext: ModelContext?
     private let keychain = KeychainStore()
     private var service = BountyTrackerService()
+    private var deviceFlow = GitHubDeviceFlowClient()
 
     func configure(modelContext: ModelContext) {
         self.modelContext = modelContext
@@ -56,15 +60,59 @@ final class BountyTrackerViewModel: ObservableObject {
             authError = "Paste a GitHub personal access token."
             return
         }
+        await authenticateWithGitHubToken(trimmed, successPrefix: "Signed in")
+    }
+
+    func startGitHubDeviceLogin(includePrivateRepositories: Bool) async -> URL? {
+        guard isStartingGitHubDeviceLogin == false else { return githubDeviceAuthorization?.verificationURL }
+        isStartingGitHubDeviceLogin = true
+        defer { isStartingGitHubDeviceLogin = false }
         authError = nil
         do {
-            let user = try await service.github.validateToken(trimmed)
-            try keychain.save(trimmed, for: .githubToken)
+            let authorization = try await deviceFlow.requestDeviceCode(includePrivateRepositories: includePrivateRepositories)
+            githubDeviceAuthorization = authorization
+            syncMessage = "Open GitHub and enter code \(authorization.userCode). iOS can use your saved GitHub passkey there."
+            return authorization.verificationURL
+        } catch {
+            authError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func finishGitHubDeviceLogin() async {
+        guard let authorization = githubDeviceAuthorization else {
+            authError = "Start GitHub passkey login first."
+            return
+        }
+        guard isFinishingGitHubDeviceLogin == false else { return }
+        isFinishingGitHubDeviceLogin = true
+        defer { isFinishingGitHubDeviceLogin = false }
+        authError = nil
+        do {
+            let token = try await deviceFlow.pollForAccessToken(authorization: authorization)
+            await authenticateWithGitHubToken(token.accessToken, successPrefix: "GitHub passkey login complete")
+            if isAuthenticated { githubDeviceAuthorization = nil }
+        } catch {
+            authError = error.localizedDescription
+        }
+    }
+
+    func cancelGitHubDeviceLogin() {
+        githubDeviceAuthorization = nil
+        syncMessage = "GitHub passkey login canceled."
+    }
+
+
+    private func authenticateWithGitHubToken(_ token: String, successPrefix: String) async {
+        authError = nil
+        do {
+            let user = try await service.github.validateToken(token)
+            try keychain.save(token, for: .githubToken)
             hasGitHubToken = true
             isAuthenticated = true
             authenticatedLogin = user.login
             try upsertAccount(user: user, hasGitHubToken: true, hasAlgoraToken: hasAlgoraToken)
-            syncMessage = "Signed in as \(user.login)."
+            syncMessage = "\(successPrefix) as \(user.login)."
         } catch {
             isAuthenticated = false
             authError = error.localizedDescription
