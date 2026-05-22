@@ -237,7 +237,7 @@ final class BountyTrackerViewModel: ObservableObject {
         do {
             try upsertBounty(snapshot)
             try modelContext?.save()
-            syncMessage = "Added \(snapshot.repoOwner)/\(snapshot.repoName)#\(snapshot.issueNumber) to tracking."
+            syncMessage = "Added \(snapshot.repoOwner)/\(snapshot.repoName)#\(snapshot.issueNumber) to the bounty queue."
         } catch {
             syncMessage = error.localizedDescription
         }
@@ -256,6 +256,70 @@ final class BountyTrackerViewModel: ObservableObject {
         } catch {
             syncMessage = error.localizedDescription
             return false
+        }
+    }
+
+    func saveManagement(
+        for bounty: Bounty,
+        stage: BountyManagementStage,
+        priority: BountyUserPriority,
+        isPinned: Bool,
+        followUpAt: Date?,
+        notes: String,
+        tags: [String]
+    ) {
+        bounty.managementStage = stage
+        bounty.userPriority = priority
+        bounty.isPinned = isPinned
+        bounty.followUpAt = followUpAt
+        bounty.userNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        bounty.userTags = tags
+        bounty.lastManagedAt = Date()
+        persistManagement(message: "Saved management for \(bounty.issueSlug).")
+    }
+
+    func setManagementStage(_ stage: BountyManagementStage, for bounty: Bounty) {
+        bounty.managementStage = stage
+        if stage == .archived { bounty.isPinned = false }
+        persistManagement(message: "Moved \(bounty.issueSlug) to \(stage.rawValue).")
+    }
+
+    func setPriority(_ priority: BountyUserPriority, for bounty: Bounty) {
+        bounty.userPriority = priority
+        persistManagement(message: "Set \(bounty.issueSlug) priority to \(priority.rawValue).")
+    }
+
+    func togglePinned(_ bounty: Bounty) {
+        bounty.isPinned.toggle()
+        bounty.lastManagedAt = Date()
+        persistManagement(message: bounty.isPinned ? "Pinned \(bounty.issueSlug)." : "Unpinned \(bounty.issueSlug).")
+    }
+
+    func setFollowUp(_ date: Date?, for bounty: Bounty) {
+        bounty.followUpAt = date
+        bounty.lastManagedAt = Date()
+        persistManagement(message: date == nil ? "Cleared follow-up for \(bounty.issueSlug)." : "Updated follow-up for \(bounty.issueSlug).")
+    }
+
+    func deleteBounty(_ bounty: Bounty) {
+        guard let modelContext else { return }
+        let stableID = bounty.stableID
+        do {
+            try deleteLinkedRecords(bountyStableID: stableID)
+            modelContext.delete(bounty)
+            try modelContext.save()
+            syncMessage = "Removed \(bounty.issueSlug) from tracking."
+        } catch {
+            syncMessage = error.localizedDescription
+        }
+    }
+
+    private func persistManagement(message: String) {
+        do {
+            try modelContext?.save()
+            syncMessage = message
+        } catch {
+            syncMessage = error.localizedDescription
         }
     }
 
@@ -290,6 +354,11 @@ final class BountyTrackerViewModel: ObservableObject {
         for bounty in bounties.sorted(by: { $0.updatedAt > $1.updatedAt }) {
             lines.append("## \(bounty.issueSlug) - \(bounty.title)")
             lines.append("- Payout: \(bounty.payoutText)")
+            lines.append("- Stage: \(bounty.managementStage.rawValue)")
+            lines.append("- Priority: \(bounty.userPriority.rawValue)")
+            if let followUp = bounty.followUpAt { lines.append("- Follow-up: \(followUp.formatted(date: .abbreviated, time: .shortened))") }
+            if bounty.userTags.isEmpty == false { lines.append("- Tags: \(bounty.userTags.joined(separator: ", "))") }
+            if bounty.userNotes.isEmpty == false { lines.append("- Notes: \(bounty.userNotes)") }
             lines.append("- Status: \(bounty.workflowStatus.rawValue)")
             lines.append("- Claim: \(bounty.claimStatus.rawValue)")
             lines.append("- Checks: \(bounty.checkState.rawValue)")
@@ -304,7 +373,7 @@ final class BountyTrackerViewModel: ObservableObject {
     }
 
     func csvExport(for bounties: [Bounty]) -> String {
-        var rows = ["repo,issue,pr,title,payout,status,claim,checks,risk,payoutChance,competition,nextAction,githubURL"]
+        var rows = ["repo,issue,pr,title,payout,stage,priority,pinned,followUp,tags,status,claim,checks,risk,payoutChance,competition,nextAction,githubURL"]
         for bounty in bounties.sorted(by: { $0.updatedAt > $1.updatedAt }) {
             let cells = [
                 bounty.repoSlug,
@@ -312,6 +381,11 @@ final class BountyTrackerViewModel: ObservableObject {
                 bounty.linkedPullRequestNumber.map { String($0) } ?? "",
                 bounty.title,
                 bounty.payoutText,
+                bounty.managementStage.rawValue,
+                bounty.userPriority.rawValue,
+                bounty.isPinned ? "true" : "false",
+                bounty.followUpAt?.formatted(date: .numeric, time: .shortened) ?? "",
+                bounty.userTags.joined(separator: ";"),
                 bounty.workflowStatus.rawValue,
                 bounty.claimStatus.rawValue,
                 bounty.checkState.rawValue,
@@ -516,6 +590,59 @@ final class BountyTrackerViewModel: ObservableObject {
         default:
             return true
         }
+    }
+
+    private func deleteLinkedRecords(bountyStableID: String) throws {
+        guard let modelContext else { return }
+        try deleteWhere(PullRequest.self, bountyStableID: bountyStableID)
+        try deleteWhere(GitHubIssue.self, bountyStableID: bountyStableID)
+        try deleteWhere(RepoRuleSet.self, bountyStableID: bountyStableID)
+        try deleteWhere(CompetitorPR.self, bountyStableID: bountyStableID)
+        try deleteWhere(Claim.self, bountyStableID: bountyStableID)
+        try deleteWhere(RiskScoreSnapshot.self, bountyStableID: bountyStableID)
+        try deleteWhere(AlertEvent.self, bountyStableID: bountyStableID)
+    }
+
+    private func deleteWhere(_ type: PullRequest.Type, bountyStableID: String) throws {
+        guard let modelContext else { return }
+        let descriptor = FetchDescriptor<PullRequest>(predicate: #Predicate { $0.bountyStableID == bountyStableID })
+        for item in try modelContext.fetch(descriptor) { modelContext.delete(item) }
+    }
+
+    private func deleteWhere(_ type: GitHubIssue.Type, bountyStableID: String) throws {
+        guard let modelContext else { return }
+        let descriptor = FetchDescriptor<GitHubIssue>(predicate: #Predicate { $0.bountyStableID == bountyStableID })
+        for item in try modelContext.fetch(descriptor) { modelContext.delete(item) }
+    }
+
+    private func deleteWhere(_ type: RepoRuleSet.Type, bountyStableID: String) throws {
+        guard let modelContext else { return }
+        let descriptor = FetchDescriptor<RepoRuleSet>(predicate: #Predicate { $0.bountyStableID == bountyStableID })
+        for item in try modelContext.fetch(descriptor) { modelContext.delete(item) }
+    }
+
+    private func deleteWhere(_ type: CompetitorPR.Type, bountyStableID: String) throws {
+        guard let modelContext else { return }
+        let descriptor = FetchDescriptor<CompetitorPR>(predicate: #Predicate { $0.bountyStableID == bountyStableID })
+        for item in try modelContext.fetch(descriptor) { modelContext.delete(item) }
+    }
+
+    private func deleteWhere(_ type: Claim.Type, bountyStableID: String) throws {
+        guard let modelContext else { return }
+        let descriptor = FetchDescriptor<Claim>(predicate: #Predicate { $0.bountyStableID == bountyStableID })
+        for item in try modelContext.fetch(descriptor) { modelContext.delete(item) }
+    }
+
+    private func deleteWhere(_ type: RiskScoreSnapshot.Type, bountyStableID: String) throws {
+        guard let modelContext else { return }
+        let descriptor = FetchDescriptor<RiskScoreSnapshot>(predicate: #Predicate { $0.bountyStableID == bountyStableID })
+        for item in try modelContext.fetch(descriptor) { modelContext.delete(item) }
+    }
+
+    private func deleteWhere(_ type: AlertEvent.Type, bountyStableID: String) throws {
+        guard let modelContext else { return }
+        let descriptor = FetchDescriptor<AlertEvent>(predicate: #Predicate { $0.bountyStableID == bountyStableID })
+        for item in try modelContext.fetch(descriptor) { modelContext.delete(item) }
     }
 
     private func deleteAll<T: PersistentModel>(_ type: T.Type) throws {

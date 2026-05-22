@@ -66,6 +66,31 @@ extension View {
     }
 }
 
+
+extension BountyManagementStage {
+    var tint: Color {
+        switch self {
+        case .inbox: return .secondary
+        case .focus: return .orange
+        case .waiting: return .blue
+        case .payout: return .purple
+        case .done: return .green
+        case .archived: return .secondary
+        }
+    }
+}
+
+extension BountyUserPriority {
+    var tint: Color {
+        switch self {
+        case .low: return .secondary
+        case .normal: return .blue
+        case .high: return .orange
+        case .urgent: return .red
+        }
+    }
+}
+
 extension BountyWorkflowStatus {
     var tint: Color {
         switch self {

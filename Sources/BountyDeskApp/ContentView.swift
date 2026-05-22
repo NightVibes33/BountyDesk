@@ -502,8 +502,11 @@ private struct BountyListView: View {
     @Query(sort: \WatchedOrg.handle) private var watchedOrgs: [WatchedOrg]
     @Query(sort: \Bounty.updatedAt, order: .reverse) private var bounties: [Bounty]
     @State private var searchText = ""
+    @State private var selectedStage: BountyManagementStage?
     @State private var selectedStatus: BountyWorkflowStatus?
     @State private var selectedRisk: RiskLevel?
+    @State private var selectedPriority: BountyUserPriority?
+    @State private var showArchived = false
     @State private var isAdding = false
 
     var body: some View {
@@ -519,7 +522,7 @@ private struct BountyListView: View {
                     .listRowBackground(Color.clear)
 
                     if filteredBounties.isEmpty {
-                        ContentUnavailableView("No Verified Algora Bounty PRs", systemImage: "tray", description: Text("Excluded issues need official Algora evidence with amount and claim flow."))
+                        ContentUnavailableView("No Managed Bounties", systemImage: "tray", description: Text("Refresh or track a verified Algora bounty, then assign a stage, priority, follow-up, tags, and notes."))
                             .listRowBackground(Color.clear)
                     } else {
                         ForEach(filteredBounties, id: \.stableID) { bounty in
@@ -531,10 +534,51 @@ private struct BountyListView: View {
                             .buttonStyle(.plain)
                             .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
                             .listRowBackground(Color.clear)
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button { app.togglePinned(bounty) } label: {
+                                    Label(bounty.isPinned ? "Unpin" : "Pin", systemImage: bounty.isPinned ? "star.slash" : "star")
+                                }
+                                .tint(.yellow)
+                                Button { app.setManagementStage(.focus, for: bounty) } label: {
+                                    Label("Focus", systemImage: BountyManagementStage.focus.systemImage)
+                                }
+                                .tint(.orange)
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) { app.setManagementStage(.archived, for: bounty) } label: {
+                                    Label("Archive", systemImage: BountyManagementStage.archived.systemImage)
+                                }
+                                Button { app.setManagementStage(.waiting, for: bounty) } label: {
+                                    Label("Waiting", systemImage: BountyManagementStage.waiting.systemImage)
+                                }
+                                .tint(.blue)
+                            }
                             .contextMenu {
+                                Button { app.togglePinned(bounty) } label: {
+                                    Label(bounty.isPinned ? "Unpin" : "Pin", systemImage: bounty.isPinned ? "star.slash" : "star")
+                                }
+                                Menu("Move to Stage") {
+                                    ForEach(BountyManagementStage.allCases) { stage in
+                                        Button { app.setManagementStage(stage, for: bounty) } label: {
+                                            Label(stage.rawValue, systemImage: stage.systemImage)
+                                        }
+                                    }
+                                }
+                                Menu("Priority") {
+                                    ForEach(BountyUserPriority.allCases) { priority in
+                                        Button { app.setPriority(priority, for: bounty) } label: {
+                                            Label(priority.rawValue, systemImage: priority.systemImage)
+                                        }
+                                    }
+                                }
+                                Divider()
                                 Link("Open GitHub Issue", destination: bounty.githubIssueURL)
                                 Link("Open Algora Page", destination: bounty.algoraIssueURL)
                                 if let url = bounty.pullRequestURL { Link("Open Pull Request", destination: url) }
+                                Divider()
+                                Button(role: .destructive) { app.deleteBounty(bounty) } label: {
+                                    Label("Remove From Tracking", systemImage: "trash")
+                                }
                             }
                         }
                     }
@@ -543,8 +587,8 @@ private struct BountyListView: View {
                 .scrollContentBackground(.hidden)
                 .refreshable { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) }
             }
-            .searchable(text: $searchText, prompt: "Repo, title, label, next action")
-            .navigationTitle("Algora Bounties")
+            .searchable(text: $searchText, prompt: "Repo, title, tag, note, next action")
+            .navigationTitle("Bounty Queue")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { isAdding = true } label: { Image(systemName: "plus") }
@@ -566,7 +610,7 @@ private struct BountyListView: View {
     private var filters: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
+                Label("Manage", systemImage: "slider.horizontal.3")
                     .font(.headline)
                 Spacer()
                 Text("\(filteredBounties.count)")
@@ -574,17 +618,34 @@ private struct BountyListView: View {
                     .contentTransition(.numericText())
                     .foregroundStyle(.secondary)
             }
-            Picker("Status", selection: Binding(get: { selectedStatus }, set: { selectedStatus = $0 })) {
-                Text("All").tag(nil as BountyWorkflowStatus?)
-                ForEach(BountyWorkflowStatus.allCases) { status in Text(status.rawValue).tag(status as BountyWorkflowStatus?) }
+            Picker("Stage", selection: Binding(get: { selectedStage }, set: { selectedStage = $0 })) {
+                Text("All Stages").tag(nil as BountyManagementStage?)
+                ForEach(BountyManagementStage.allCases) { stage in Text(stage.rawValue).tag(stage as BountyManagementStage?) }
             }
             .pickerStyle(.menu)
 
-            Picker("Risk", selection: Binding(get: { selectedRisk }, set: { selectedRisk = $0 })) {
-                Text("All Risk").tag(nil as RiskLevel?)
-                ForEach(RiskLevel.allCases) { risk in Text(risk.rawValue).tag(risk as RiskLevel?) }
+            Picker("Priority", selection: Binding(get: { selectedPriority }, set: { selectedPriority = $0 })) {
+                Text("All Priority").tag(nil as BountyUserPriority?)
+                ForEach(BountyUserPriority.allCases) { priority in Text(priority.rawValue).tag(priority as BountyUserPriority?) }
             }
             .pickerStyle(.segmented)
+
+            HStack {
+                Picker("Status", selection: Binding(get: { selectedStatus }, set: { selectedStatus = $0 })) {
+                    Text("All Status").tag(nil as BountyWorkflowStatus?)
+                    ForEach(BountyWorkflowStatus.allCases) { status in Text(status.rawValue).tag(status as BountyWorkflowStatus?) }
+                }
+                .pickerStyle(.menu)
+
+                Picker("Risk", selection: Binding(get: { selectedRisk }, set: { selectedRisk = $0 })) {
+                    Text("All Risk").tag(nil as RiskLevel?)
+                    ForEach(RiskLevel.allCases) { risk in Text(risk.rawValue).tag(risk as RiskLevel?) }
+                }
+                .pickerStyle(.menu)
+            }
+
+            Toggle("Show archived", isOn: $showArchived)
+                .font(.subheadline)
         }
         .padding(14)
         .bountyGlassCard(cornerRadius: 8, interactive: true)
@@ -593,14 +654,30 @@ private struct BountyListView: View {
     private var filteredBounties: [Bounty] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return bounties.filter { bounty in
+            if showArchived == false && bounty.managementStage == .archived { return false }
+            if let selectedStage, bounty.managementStage != selectedStage { return false }
             if let selectedStatus, bounty.workflowStatus != selectedStatus { return false }
             if let selectedRisk, bounty.riskLevel != selectedRisk { return false }
+            if let selectedPriority, bounty.userPriority != selectedPriority { return false }
             guard query.isEmpty == false else { return true }
             return bounty.title.lowercased().contains(query)
                 || bounty.repoSlug.lowercased().contains(query)
                 || bounty.labels.joined(separator: " ").lowercased().contains(query)
+                || bounty.userTags.joined(separator: " ").lowercased().contains(query)
+                || bounty.userNotes.lowercased().contains(query)
                 || bounty.nextAction.lowercased().contains(query)
         }
+        .sorted(by: managementSort)
+    }
+
+    private func managementSort(_ lhs: Bounty, _ rhs: Bounty) -> Bool {
+        if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+        if lhs.isFollowUpDue != rhs.isFollowUpDue { return lhs.isFollowUpDue }
+        let priorityDelta = priorityRank(lhs.userPriority) - priorityRank(rhs.userPriority)
+        if priorityDelta != 0 { return priorityDelta > 0 }
+        let stageDelta = stageRank(lhs.managementStage) - stageRank(rhs.managementStage)
+        if stageDelta != 0 { return stageDelta > 0 }
+        return lhs.updatedAt > rhs.updatedAt
     }
 }
 
@@ -609,24 +686,26 @@ private struct BountyManagementPanel: View {
     let diagnostics: RefreshDiagnostics
 
     private var activeBounties: [Bounty] {
-        bounties.filter { ![BountyWorkflowStatus.paid, .lost, .blocked].contains($0.workflowStatus) }
+        bounties.filter { ![BountyWorkflowStatus.paid, .lost, .blocked].contains($0.workflowStatus) && $0.managementStage != .archived }
     }
 
     private var needsActionCount: Int {
         activeBounties.filter { bounty in
-            bounty.riskLevel == .high
+            bounty.managementStage == .focus
+                || bounty.userPriority == .urgent
+                || bounty.isFollowUpDue
+                || bounty.riskLevel == .high
                 || bounty.checkState == .failing
-                || bounty.workflowStatus == .submitted
-                || bounty.workflowStatus == .pendingReview
         }.count
     }
 
-    private var mergedUnpaidCount: Int {
-        bounties.filter { $0.workflowStatus == .mergedUnpaid || $0.claimStatus == .paymentProcessing }.count
-    }
+    private var pinnedCount: Int { bounties.filter(\.isPinned).count }
+    private var dueFollowUpCount: Int { bounties.filter(\.isFollowUpDue).count }
+    private var archivedCount: Int { bounties.filter { $0.managementStage == .archived }.count }
+    private var payoutCount: Int { bounties.filter { $0.managementStage == .payout || $0.workflowStatus == .mergedUnpaid || $0.claimStatus == .paymentProcessing }.count }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Label("Bounty management", systemImage: "square.grid.2x2")
                     .font(.headline.weight(.semibold))
@@ -638,18 +717,60 @@ private struct BountyManagementPanel: View {
                 }
             }
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                ManagementMetric(title: "Tracked", value: "\(bounties.count)", systemImage: "tray.full", tint: .green)
-                ManagementMetric(title: "Active claims", value: "\(diagnostics.activeClaimPullRequestCount)", systemImage: "flag", tint: .blue)
-                ManagementMetric(title: "Needs action", value: "\(needsActionCount)", systemImage: "bolt.badge.clock", tint: .orange)
-                ManagementMetric(title: "Payment queue", value: "\(mergedUnpaidCount)", systemImage: "banknote", tint: .purple)
+                ManagementMetric(title: "Active", value: "\(activeBounties.count)", systemImage: "flag", tint: .blue)
+                ManagementMetric(title: "Needs Action", value: "\(needsActionCount)", systemImage: "bolt.badge.clock", tint: .orange)
+                ManagementMetric(title: "Pinned", value: "\(pinnedCount)", systemImage: "star", tint: .yellow)
+                ManagementMetric(title: "Payout Queue", value: "\(payoutCount)", systemImage: "banknote", tint: .purple)
             }
-            Text("Ordinary GitHub PRs are excluded from these totals.")
+            StagePipeline(bounties: bounties)
+            if dueFollowUpCount > 0 || archivedCount > 0 {
+                HStack(spacing: 8) {
+                    if dueFollowUpCount > 0 {
+                        StatusChip(text: "\(dueFollowUpCount) due", systemImage: "calendar.badge.exclamationmark", tint: .red)
+                    }
+                    if archivedCount > 0 {
+                        StatusChip(text: "\(archivedCount) archived", systemImage: "archivebox", tint: .secondary)
+                    }
+                }
+            }
+            Text("Saved bounties now keep local stage, priority, follow-up, tags, notes, and pinned state across refreshes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
         .bountyGlassCard(cornerRadius: 8, interactive: true)
+    }
+}
+
+private struct StagePipeline: View {
+    let bounties: [Bounty]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(BountyManagementStage.allCases) { stage in
+                    StageCountPill(stage: stage, count: bounties.filter { $0.managementStage == stage }.count)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct StageCountPill: View {
+    let stage: BountyManagementStage
+    let count: Int
+
+    var body: some View {
+        Label("\(stage.rawValue) \(count)", systemImage: stage.systemImage)
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .foregroundStyle(stage.tint)
+            .background(stage.tint.opacity(0.13), in: Capsule())
     }
 }
 
@@ -680,6 +801,7 @@ private struct ManagementMetric: View {
 }
 
 private struct BountyDetailView: View {
+    @EnvironmentObject private var app: BountyTrackerViewModel
     let bounty: Bounty
     @Query private var pullRequests: [PullRequest]
     @Query private var issues: [GitHubIssue]
@@ -700,6 +822,8 @@ private struct BountyDetailView: View {
         ZStack {
             BountyBackdrop()
             List {
+            BountyManagementEditor(bounty: bounty)
+
             Section("Summary") {
                 LabeledContent("Source", value: "Verified Algora bounty")
                 HStack { Text("Payout"); Spacer(); Text(bounty.payoutText).fontWeight(.semibold) }
@@ -786,6 +910,127 @@ private struct BountyDetailView: View {
             .scrollContentBackground(.hidden)
         }
         .navigationTitle(bounty.issueSlug)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button { app.togglePinned(bounty) } label: {
+                    Image(systemName: bounty.isPinned ? "star.fill" : "star")
+                }
+                .accessibilityLabel(bounty.isPinned ? "Unpin bounty" : "Pin bounty")
+                Menu {
+                    ForEach(BountyManagementStage.allCases) { stage in
+                        Button { app.setManagementStage(stage, for: bounty) } label: {
+                            Label(stage.rawValue, systemImage: stage.systemImage)
+                        }
+                    }
+                    Divider()
+                    Button(role: .destructive) { app.deleteBounty(bounty) } label: {
+                        Label("Remove From Tracking", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
+    }
+}
+
+private struct BountyManagementEditor: View {
+    @EnvironmentObject private var app: BountyTrackerViewModel
+    let bounty: Bounty
+    @State private var draftStage: BountyManagementStage = .inbox
+    @State private var draftPriority: BountyUserPriority = .normal
+    @State private var draftPinned = false
+    @State private var hasFollowUp = false
+    @State private var draftFollowUp = Date()
+    @State private var draftTags = ""
+    @State private var draftNotes = ""
+    @State private var didLoadDraft = false
+
+    var body: some View {
+        Section("Management") {
+            HStack(spacing: 8) {
+                StageChip(stage: bounty.managementStage)
+                PriorityChip(priority: bounty.userPriority)
+                if bounty.isPinned {
+                    StatusChip(text: "Pinned", systemImage: "star.fill", tint: .yellow)
+                }
+                if bounty.isFollowUpDue {
+                    StatusChip(text: "Due", systemImage: "calendar.badge.exclamationmark", tint: .red)
+                }
+            }
+            .padding(.vertical, 2)
+
+            Toggle(isOn: $draftPinned) {
+                Label("Pinned", systemImage: draftPinned ? "star.fill" : "star")
+            }
+
+            Picker("Stage", selection: $draftStage) {
+                ForEach(BountyManagementStage.allCases) { stage in
+                    Label(stage.rawValue, systemImage: stage.systemImage).tag(stage)
+                }
+            }
+
+            Picker("Priority", selection: $draftPriority) {
+                ForEach(BountyUserPriority.allCases) { priority in
+                    Label(priority.rawValue, systemImage: priority.systemImage).tag(priority)
+                }
+            }
+
+            Toggle("Follow up", isOn: $hasFollowUp)
+            if hasFollowUp {
+                DatePicker("Date", selection: $draftFollowUp, displayedComponents: [.date, .hourAndMinute])
+            }
+
+            TextField("Tags, comma separated", text: $draftTags)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            TextEditor(text: $draftNotes)
+                .frame(minHeight: 88)
+                .overlay(alignment: .topLeading) {
+                    if draftNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("Notes, review plan, payout context")
+                            .foregroundStyle(.secondary.opacity(0.7))
+                            .padding(.top, 8)
+                            .padding(.leading, 5)
+                            .allowsHitTesting(false)
+                    }
+                }
+
+            HStack {
+                Button { saveDraft() } label: {
+                    Label("Save Management", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.borderedProminent)
+                Button("Reset") { loadDraft(force: true) }
+                    .buttonStyle(.bordered)
+            }
+        }
+        .onAppear { loadDraft() }
+        .onChange(of: bounty.stableID) { _, _ in loadDraft(force: true) }
+    }
+
+    private func loadDraft(force: Bool = false) {
+        guard force || didLoadDraft == false else { return }
+        didLoadDraft = true
+        draftStage = bounty.managementStage
+        draftPriority = bounty.userPriority
+        draftPinned = bounty.isPinned
+        hasFollowUp = bounty.followUpAt != nil
+        draftFollowUp = bounty.followUpAt ?? Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+        draftTags = bounty.userTags.joined(separator: ", ")
+        draftNotes = bounty.userNotes
+    }
+
+    private func saveDraft() {
+        app.saveManagement(
+            for: bounty,
+            stage: draftStage,
+            priority: draftPriority,
+            isPinned: draftPinned,
+            followUpAt: hasFollowUp ? draftFollowUp : nil,
+            notes: draftNotes,
+            tags: tags(from: draftTags)
+        )
     }
 }
 
@@ -1161,11 +1406,24 @@ private struct BountyRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
-                Text(bounty.payoutText)
-                    .font(.headline.monospacedDigit().weight(.bold))
-                    .foregroundStyle(.green)
-                    .contentTransition(.numericText())
+                VStack(alignment: .trailing, spacing: 5) {
+                    if bounty.isPinned {
+                        Image(systemName: "star.fill")
+                            .foregroundStyle(.yellow)
+                            .accessibilityLabel("Pinned")
+                    }
+                    Text(bounty.payoutText)
+                        .font(.headline.monospacedDigit().weight(.bold))
+                        .foregroundStyle(.green)
+                        .contentTransition(.numericText())
+                }
             }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { managementChips }
+                VStack(alignment: .leading, spacing: 6) { managementChips }
+            }
+
             HStack(spacing: 8) {
                 StatusChip(text: bounty.workflowStatus.rawValue, systemImage: bounty.workflowStatus.systemImage, tint: bounty.workflowStatus.tint)
                 StatusChip(text: bounty.checkState.rawValue, systemImage: bounty.checkState.systemImage, tint: bounty.checkState.tint)
@@ -1176,11 +1434,35 @@ private struct BountyRow: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+            if bounty.userTags.isEmpty == false || bounty.userNotes.isEmpty == false || bounty.followUpAt != nil {
+                VStack(alignment: .leading, spacing: 6) {
+                    if bounty.userTags.isEmpty == false {
+                        TagCloud(tags: Array(bounty.userTags.prefix(4)))
+                    }
+                    Text(bounty.managementSummary)
+                        .font(.caption)
+                        .foregroundStyle(bounty.isFollowUpDue ? Color.red : Color.secondary)
+                        .lineLimit(1)
+                }
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .bountyGlassCard(cornerRadius: 8, interactive: true)
         .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var managementChips: some View {
+        StageChip(stage: bounty.managementStage)
+        PriorityChip(priority: bounty.userPriority)
+        if let followUpAt = bounty.followUpAt {
+            StatusChip(
+                text: bounty.isFollowUpDue ? "Follow-up due" : followUpAt.formatted(date: .abbreviated, time: .omitted),
+                systemImage: bounty.isFollowUpDue ? "calendar.badge.exclamationmark" : "calendar",
+                tint: bounty.isFollowUpDue ? .red : .secondary
+            )
+        }
     }
 }
 
@@ -1195,6 +1477,10 @@ private struct BountyCompactRow: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(bounty.issueSlug).font(.subheadline.weight(.semibold))
                     Text(bounty.title).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                    HStack(spacing: 6) {
+                        StageChip(stage: bounty.managementStage)
+                        PriorityChip(priority: bounty.userPriority)
+                    }
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 6) {
@@ -1261,6 +1547,11 @@ private struct ActionRow: View {
                         .foregroundStyle(.green)
                 }
                 Text(bounty.nextAction).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                HStack(spacing: 6) {
+                    StageChip(stage: bounty.managementStage)
+                    PriorityChip(priority: bounty.userPriority)
+                    if bounty.isPinned { StatusChip(text: "Pinned", systemImage: "star.fill", tint: .yellow) }
+                }
             }
         }
         .padding(14)
@@ -1373,6 +1664,46 @@ private struct RiskChip: View {
     }
 }
 
+private struct StageChip: View {
+    let stage: BountyManagementStage
+
+    var body: some View {
+        StatusChip(text: stage.rawValue, systemImage: stage.systemImage, tint: stage.tint)
+    }
+}
+
+private struct PriorityChip: View {
+    let priority: BountyUserPriority
+
+    var body: some View {
+        StatusChip(text: priority.rawValue, systemImage: priority.systemImage, tint: priority.tint)
+    }
+}
+
+private struct TagCloud: View {
+    let tags: [String]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) { tagViews }
+            VStack(alignment: .leading, spacing: 6) { tagViews }
+        }
+    }
+
+    @ViewBuilder
+    private var tagViews: some View {
+        ForEach(tags, id: \.self) { tag in
+            Text(tag)
+                .font(.caption2.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .foregroundStyle(.secondary)
+                .background(.secondary.opacity(0.12), in: Capsule())
+        }
+    }
+}
+
 private struct EvidenceList: View {
     let values: [String]
     let empty: String
@@ -1432,6 +1763,40 @@ private func riskRank(_ risk: RiskLevel) -> Int {
     }
 }
 
+private func priorityRank(_ priority: BountyUserPriority) -> Int {
+    switch priority {
+    case .urgent: return 4
+    case .high: return 3
+    case .normal: return 2
+    case .low: return 1
+    }
+}
+
+private func stageRank(_ stage: BountyManagementStage) -> Int {
+    switch stage {
+    case .focus: return 6
+    case .payout: return 5
+    case .waiting: return 4
+    case .inbox: return 3
+    case .done: return 2
+    case .archived: return 1
+    }
+}
+
+private func tags(from text: String) -> [String] {
+    text.split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { $0.isEmpty == false }
+        .uniquedCaseInsensitive()
+}
+
 private func dollars(_ amount: Int) -> String {
     amount.formatted(.currency(code: "USD").precision(.fractionLength(0)))
+}
+
+private extension Array where Element == String {
+    func uniquedCaseInsensitive() -> [String] {
+        var seen = Set<String>()
+        return filter { seen.insert($0.lowercased()).inserted }
+    }
 }

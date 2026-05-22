@@ -94,6 +94,47 @@ enum RiskLevel: String, CaseIterable, Codable, Identifiable {
     var id: String { rawValue }
 }
 
+
+enum BountyManagementStage: String, CaseIterable, Codable, Identifiable {
+    case inbox = "Inbox"
+    case focus = "Focus"
+    case waiting = "Waiting"
+    case payout = "Payout"
+    case done = "Done"
+    case archived = "Archived"
+
+    var id: String { rawValue }
+
+    var systemImage: String {
+        switch self {
+        case .inbox: return "tray"
+        case .focus: return "scope"
+        case .waiting: return "clock"
+        case .payout: return "banknote"
+        case .done: return "checkmark.seal"
+        case .archived: return "archivebox"
+        }
+    }
+}
+
+enum BountyUserPriority: String, CaseIterable, Codable, Identifiable {
+    case low = "Low"
+    case normal = "Normal"
+    case high = "High"
+    case urgent = "Urgent"
+
+    var id: String { rawValue }
+
+    var systemImage: String {
+        switch self {
+        case .low: return "arrow.down.circle"
+        case .normal: return "equal.circle"
+        case .high: return "arrow.up.circle"
+        case .urgent: return "exclamationmark.circle"
+        }
+    }
+}
+
 enum AlertKind: String, CaseIterable, Codable, Identifiable {
     case maintainerComment = "Maintainer Comment"
     case botStatus = "Bot Status"
@@ -201,6 +242,13 @@ final class Bounty {
     var createdAt: Date
     var updatedAt: Date
     var lastRefreshedAt: Date?
+    var managementStageRaw: String?
+    var userPriorityRaw: String?
+    var isPinned: Bool = false
+    var followUpAt: Date?
+    var userNotes: String = ""
+    var userTagsText: String = ""
+    var lastManagedAt: Date?
 
     init(snapshot: TrackedBountySnapshot) {
         self.stableID = snapshot.stableID
@@ -242,6 +290,13 @@ final class Bounty {
         self.createdAt = snapshot.createdAt
         self.updatedAt = snapshot.updatedAt
         self.lastRefreshedAt = snapshot.lastRefreshedAt
+        self.managementStageRaw = nil
+        self.userPriorityRaw = nil
+        self.isPinned = false
+        self.followUpAt = nil
+        self.userNotes = ""
+        self.userTagsText = ""
+        self.lastManagedAt = nil
     }
 
     func apply(_ snapshot: TrackedBountySnapshot) {
@@ -331,6 +386,63 @@ final class Bounty {
     var riskFactors: [String] {
         get { LineCodec.decode(riskFactorsText) }
         set { riskFactorsText = LineCodec.encode(newValue) }
+    }
+
+    var managementStage: BountyManagementStage {
+        get {
+            if let managementStageRaw, let stage = BountyManagementStage(rawValue: managementStageRaw) { return stage }
+            return suggestedManagementStage
+        }
+        set {
+            managementStageRaw = newValue.rawValue
+            lastManagedAt = Date()
+        }
+    }
+
+    var userPriority: BountyUserPriority {
+        get {
+            if let userPriorityRaw, let priority = BountyUserPriority(rawValue: userPriorityRaw) { return priority }
+            return suggestedPriority
+        }
+        set {
+            userPriorityRaw = newValue.rawValue
+            lastManagedAt = Date()
+        }
+    }
+
+    var userTags: [String] {
+        get { LineCodec.decode(userTagsText) }
+        set {
+            userTagsText = LineCodec.encode(newValue)
+            lastManagedAt = Date()
+        }
+    }
+
+    var isArchived: Bool { managementStage == .archived }
+    var isFollowUpDue: Bool { followUpAt.map { $0 <= Date() } ?? false }
+    var hasFollowUp: Bool { followUpAt != nil }
+
+    var managementSummary: String {
+        if isFollowUpDue { return "Follow up is due" }
+        if let followUpAt { return "Follow up \(followUpAt.formatted(date: .abbreviated, time: .omitted))" }
+        if userNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { return "Notes saved" }
+        return managementStage == suggestedManagementStage ? "Auto-sorted from live status" : "Managed manually"
+    }
+
+    private var suggestedManagementStage: BountyManagementStage {
+        if workflowStatus == .paid || claimStatus == .paymentSucceeded { return .done }
+        if workflowStatus == .lost || workflowStatus == .blocked { return .archived }
+        if workflowStatus == .mergedUnpaid || claimStatus == .paymentProcessing || claimStatus == .accepted { return .payout }
+        if workflowStatus == .pendingReview || latestMaintainerComment.isEmpty == false { return .waiting }
+        if checkState == .failing || riskLevel == .high || priorRejectedSignal { return .focus }
+        return .inbox
+    }
+
+    private var suggestedPriority: BountyUserPriority {
+        if checkState == .failing || riskLevel == .high || priorRejectedSignal { return .urgent }
+        if amount >= 500 || workflowStatus == .mergedUnpaid || claimStatus == .paymentProcessing { return .high }
+        if riskLevel == .low && amount < 100 { return .low }
+        return .normal
     }
 
     var repoSlug: String { "\(repoOwner)/\(repoName)" }
