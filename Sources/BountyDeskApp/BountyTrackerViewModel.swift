@@ -9,6 +9,7 @@ struct RefreshDiagnostics: Equatable {
     var trackedBountyCount = 0
     var scannedPullRequestCount = 0
     var claimPullRequestCount = 0
+    var activeClaimPullRequestCount = 0
     var linkedIssueCheckCount = 0
     var skippedPullRequestCount = 0
     var failedPullRequestCount = 0
@@ -189,6 +190,7 @@ final class BountyTrackerViewModel: ObservableObject {
                 trackedBountyCount: result.bounties.count,
                 scannedPullRequestCount: result.scannedPullRequestCount,
                 claimPullRequestCount: result.claimPullRequestCount,
+                activeClaimPullRequestCount: result.activeClaimPullRequestCount,
                 linkedIssueCheckCount: result.linkedIssueCheckCount,
                 skippedPullRequestCount: result.skippedPullRequestCount,
                 failedPullRequestCount: result.failedPullRequestCount,

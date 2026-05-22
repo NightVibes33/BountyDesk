@@ -9,6 +9,18 @@ enum BountyParsing {
             || normalized.contains("🙋 bounty claim")
     }
 
+    static func claimIssueNumbers(in text: String) -> [Int] {
+        var values: [Int] = []
+        let patterns = [
+            #"(?:@algora-pbc\s+)?/claim\s+#(\d{1,7})"#,
+            #"(?:@algora-pbc\s+)?/attempt\s+#(\d{1,7})"#
+        ]
+        for pattern in patterns {
+            values.append(contentsOf: captureIntegers(in: text, pattern: pattern))
+        }
+        return orderedUnique(values)
+    }
+
     static func linkedIssueNumbers(in text: String) -> [Int] {
         var values: [Int] = []
         let patterns = [
@@ -218,6 +230,11 @@ enum BountyParsing {
             guard let matchRange = Range(match.range(at: captureIndex), in: text) else { return nil }
             return String(text[matchRange])
         }
+    }
+
+    private static func orderedUnique(_ values: [Int]) -> [Int] {
+        var seen = Set<Int>()
+        return values.filter { seen.insert($0).inserted }
     }
 
     private static func firstMatch(in text: String, pattern: String) -> [String]? {

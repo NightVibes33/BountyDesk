@@ -512,6 +512,7 @@ private struct BountyListView: View {
                 BountyBackdrop()
                 List {
                     Section {
+                        BountyManagementPanel(bounties: bounties, diagnostics: app.refreshDiagnostics)
                         filters
                     }
                     .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
@@ -600,6 +601,81 @@ private struct BountyListView: View {
                 || bounty.labels.joined(separator: " ").lowercased().contains(query)
                 || bounty.nextAction.lowercased().contains(query)
         }
+    }
+}
+
+private struct BountyManagementPanel: View {
+    let bounties: [Bounty]
+    let diagnostics: RefreshDiagnostics
+
+    private var activeBounties: [Bounty] {
+        bounties.filter { ![BountyWorkflowStatus.paid, .lost, .blocked].contains($0.workflowStatus) }
+    }
+
+    private var needsActionCount: Int {
+        activeBounties.filter { bounty in
+            bounty.riskLevel == .high
+                || bounty.checkState == .failing
+                || bounty.workflowStatus == .submitted
+                || bounty.workflowStatus == .pendingReview
+        }.count
+    }
+
+    private var mergedUnpaidCount: Int {
+        bounties.filter { $0.workflowStatus == .mergedUnpaid || $0.claimStatus == .paymentProcessing }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Bounty management", systemImage: "square.grid.2x2")
+                    .font(.headline.weight(.semibold))
+                Spacer()
+                if let updatedAt = diagnostics.updatedAt {
+                    Text(updatedAt, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                ManagementMetric(title: "Tracked", value: "\(bounties.count)", systemImage: "tray.full", tint: .green)
+                ManagementMetric(title: "Active claims", value: "\(diagnostics.activeClaimPullRequestCount)", systemImage: "flag", tint: .blue)
+                ManagementMetric(title: "Needs action", value: "\(needsActionCount)", systemImage: "bolt.badge.clock", tint: .orange)
+                ManagementMetric(title: "Payment queue", value: "\(mergedUnpaidCount)", systemImage: "banknote", tint: .purple)
+            }
+            Text("Ordinary GitHub PRs are excluded from these totals.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .bountyGlassCard(cornerRadius: 8, interactive: true)
+    }
+}
+
+private struct ManagementMetric: View {
+    let title: String
+    let value: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+            Text(value)
+                .font(.headline.monospacedDigit().weight(.bold))
+                .contentTransition(.numericText())
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -973,6 +1049,7 @@ private struct SettingsView: View {
                         LabeledContent("Tracked Algora Bounties", value: "\(app.refreshDiagnostics.trackedBountyCount)")
                         LabeledContent("Checked PRs", value: "\(app.refreshDiagnostics.scannedPullRequestCount)")
                         LabeledContent("Direct Algora Matches", value: "\(app.refreshDiagnostics.claimPullRequestCount)")
+                        LabeledContent("Active Algora Matches", value: "\(app.refreshDiagnostics.activeClaimPullRequestCount)")
                         LabeledContent("Linked Issue Checks", value: "\(app.refreshDiagnostics.linkedIssueCheckCount)")
                         LabeledContent("No Algora Evidence", value: "\(app.refreshDiagnostics.skippedPullRequestCount)")
                         if app.refreshDiagnostics.failedPullRequestCount > 0 {

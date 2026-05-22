@@ -25,6 +25,7 @@ struct BountyTrackerService {
                 result.warnings.append("Linked-issue evidence check failed: \(error.localizedDescription).")
             }
             result.claimPullRequestCount = claimPRs.count
+            result.activeClaimPullRequestCount = claimPRs.filter { $0.state.lowercased() == "open" }.count
             result.linkedIssueCheckCount = recentPRs.count
             let directClaimURLs = Set(claimPRs.map(\.htmlUrl))
             let candidates = dedupeSearchItems(claimPRs + recentPRs)
@@ -110,8 +111,10 @@ struct BountyTrackerService {
         let pr = try await prTask
         let prIssueComments = (try? await prIssueCommentsTask) ?? []
         let prBody = pr.body ?? item.body ?? ""
-        let linkedIssues = BountyParsing.linkedIssueNumbers(in: prBody + "\n" + prIssueComments.map(\.body).joined(separator: "\n"))
-        let issueNumber = linkedIssues.first ?? item.number
+        let prEvidenceText = prBody + "\n" + prIssueComments.map(\.body).joined(separator: "\n")
+        let claimIssues = BountyParsing.claimIssueNumbers(in: prEvidenceText)
+        let linkedIssues = BountyParsing.linkedIssueNumbers(in: prEvidenceText).filter { claimIssues.contains($0) == false }
+        let issueNumber = (claimIssues + linkedIssues).first ?? item.number
         async let issueTask = github.issue(owner: slug.owner, repo: slug.repo, number: issueNumber, token: token)
         async let issueCommentsTask = github.issueComments(owner: slug.owner, repo: slug.repo, number: issueNumber, token: token)
         let issue = (try? await issueTask) ?? fallbackIssue(from: item, owner: slug.owner, repo: slug.repo, number: issueNumber)
@@ -641,6 +644,7 @@ struct TrackerRefreshResult {
     var user: GitHubUser?
     var scannedPullRequestCount = 0
     var claimPullRequestCount = 0
+    var activeClaimPullRequestCount = 0
     var linkedIssueCheckCount = 0
     var skippedPullRequestCount = 0
     var failedPullRequestCount = 0
