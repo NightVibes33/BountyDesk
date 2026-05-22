@@ -10,8 +10,22 @@ struct BountyTrackerService {
         do {
             let user = try await github.validateToken(githubToken)
             result.user = user
-            let claimPRs = try await github.searchClaimPullRequests(username: user.login, token: githubToken)
-            let recentPRs = (try? await github.searchRecentAuthoredPullRequests(username: user.login, token: githubToken)) ?? []
+            let claimPRs: [GitHubSearchItem]
+            do {
+                claimPRs = try await github.searchClaimPullRequests(username: user.login, token: githubToken)
+            } catch {
+                claimPRs = []
+                result.warnings.append("Claim PR search failed: \(error.localizedDescription). Continuing with linked-issue evidence checks.")
+            }
+            let recentPRs: [GitHubSearchItem]
+            do {
+                recentPRs = try await github.searchRecentAuthoredPullRequests(username: user.login, token: githubToken)
+            } catch {
+                recentPRs = []
+                result.warnings.append("Linked-issue evidence check failed: \(error.localizedDescription).")
+            }
+            result.claimPullRequestCount = claimPRs.count
+            result.linkedIssueCheckCount = recentPRs.count
             let directClaimURLs = Set(claimPRs.map(\.htmlUrl))
             let candidates = dedupeSearchItems(claimPRs + recentPRs)
             result.scannedPullRequestCount = candidates.count
@@ -25,8 +39,10 @@ struct BountyTrackerService {
                     result.competitors.append(contentsOf: built.competitors)
                     result.riskSnapshots.append(built.riskSnapshot)
                 } catch BountyTrackerServiceError.noBountyEvidence {
+                    result.skippedPullRequestCount += 1
                     continue
                 } catch {
+                    result.failedPullRequestCount += 1
                     result.warnings.append("Skipped \(item.htmlUrl): \(error.localizedDescription)")
                 }
             }
@@ -624,6 +640,10 @@ struct BountyTrackerService {
 struct TrackerRefreshResult {
     var user: GitHubUser?
     var scannedPullRequestCount = 0
+    var claimPullRequestCount = 0
+    var linkedIssueCheckCount = 0
+    var skippedPullRequestCount = 0
+    var failedPullRequestCount = 0
     var bounties: [TrackedBountySnapshot] = []
     var pullRequests: [PullRequestSnapshot] = []
     var issues: [GitHubIssueSnapshot] = []

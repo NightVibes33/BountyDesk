@@ -4,6 +4,18 @@ import SwiftData
 import UIKit
 #endif
 
+struct RefreshDiagnostics: Equatable {
+    var githubLogin: String?
+    var trackedBountyCount = 0
+    var scannedPullRequestCount = 0
+    var claimPullRequestCount = 0
+    var linkedIssueCheckCount = 0
+    var skippedPullRequestCount = 0
+    var failedPullRequestCount = 0
+    var warningCount = 0
+    var updatedAt: Date?
+}
+
 @MainActor
 final class BountyTrackerViewModel: ObservableObject {
     @Published var isRestoringSession = false
@@ -19,6 +31,7 @@ final class BountyTrackerViewModel: ObservableObject {
     @Published var githubDeviceAuthorization: GitHubDeviceAuthorization?
     @Published var isStartingGitHubDeviceLogin = false
     @Published var isFinishingGitHubDeviceLogin = false
+    @Published var refreshDiagnostics = RefreshDiagnostics()
     @Published var discoveredBounties: [TrackedBountySnapshot] = []
     @Published var discoverFilters = DiscoverFilters()
 
@@ -171,6 +184,17 @@ final class BountyTrackerViewModel: ObservableObject {
             let orgs = watchedOrgs.filter(\.isEnabled).map(\.handle)
             let result = await service.refreshCurrentBounties(githubToken: githubToken, algoraToken: algoraToken, watchedOrgs: orgs)
             warnings = result.warnings
+            refreshDiagnostics = RefreshDiagnostics(
+                githubLogin: result.user?.login ?? authenticatedLogin,
+                trackedBountyCount: result.bounties.count,
+                scannedPullRequestCount: result.scannedPullRequestCount,
+                claimPullRequestCount: result.claimPullRequestCount,
+                linkedIssueCheckCount: result.linkedIssueCheckCount,
+                skippedPullRequestCount: result.skippedPullRequestCount,
+                failedPullRequestCount: result.failedPullRequestCount,
+                warningCount: result.warnings.count,
+                updatedAt: Date()
+            )
             if let user = result.user {
                 authenticatedLogin = user.login
                 isAuthenticated = true
@@ -178,10 +202,11 @@ final class BountyTrackerViewModel: ObservableObject {
             }
             try apply(result: result, previousBounties: previous)
             let count = result.bounties.count
+            let scanSummary = "\(result.scannedPullRequestCount) PRs checked for Algora evidence (\(result.claimPullRequestCount) direct Algora/claim matches, \(result.linkedIssueCheckCount) linked issue checks)"
             if count == 0 {
-                syncMessage = "Refresh finished. Scanned \(result.scannedPullRequestCount) recent PRs but found no Algora-backed bounty evidence. Import a GitHub issue or PR URL if the bounty is outside your recent authored PRs."
+                syncMessage = "Refresh finished. Checked \(scanSummary) but found no Algora-backed bounty evidence. Skipped \(result.skippedPullRequestCount) PRs without Algora evidence."
             } else {
-                syncMessage = "Refresh finished. Updated \(count) tracked bounties from \(result.scannedPullRequestCount) scanned PRs."
+                syncMessage = "Refresh finished. Updated \(count) Algora bounty PRs from \(scanSummary)."
             }
         } catch {
             syncMessage = error.localizedDescription

@@ -80,7 +80,7 @@ private struct LoginView: View {
                     } label: {
                         Label(app.isStartingGitHubDeviceLogin ? "Preparing GitHub" : "Continue with GitHub Passkey", systemImage: "key.horizontal")
                     }
-                    .disabled(app.isStartingGitHubDeviceLogin || app.isFinishingGitHubDeviceLogin)
+                    .disabled(app.isStartingGitHubDeviceLogin || app.isFinishingGitHubDeviceLogin || app.githubDeviceAuthorization != nil)
 
                     Toggle("Include private repositories", isOn: $includePrivateRepositories)
                     Text(includePrivateRepositories ? "GitHub will request private and public repository read access." : "GitHub will request public repository read access.")
@@ -126,6 +126,14 @@ private struct LoginView: View {
                     Section {
                         Label(error, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red)
+                        if app.githubDeviceAuthorization != nil {
+                            Button {
+                                Task { await app.finishGitHubDeviceLogin() }
+                            } label: {
+                                Label("Check Sign In Again", systemImage: "arrow.clockwise.circle")
+                            }
+                            .disabled(app.isFinishingGitHubDeviceLogin)
+                        }
                     }
                 }
             }
@@ -147,9 +155,18 @@ private struct GitHubDeviceLoginPanel: View {
                     .textSelection(.enabled)
             }
             LabeledContent("Access", value: authorization.scopeDescription)
-            Text(app.isFinishingGitHubDeviceLogin ? "Waiting for GitHub approval." : "Return here after approving GitHub to finish automatically.")
+            if app.isFinishingGitHubDeviceLogin {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Waiting for GitHub approval.")
+                }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+            } else {
+                Text("Approve in GitHub, then return here. If it does not finish immediately, check sign in manually.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             HStack {
                 Button {
                     if let url = authorization.verificationURL { openURL(url) }
@@ -165,7 +182,7 @@ private struct GitHubDeviceLoginPanel: View {
             Button {
                 Task { await app.finishGitHubDeviceLogin() }
             } label: {
-                Label(app.isFinishingGitHubDeviceLogin ? "Waiting for GitHub" : "Finish Sign In", systemImage: "checkmark.circle")
+                Label(app.isFinishingGitHubDeviceLogin ? "Waiting for GitHub" : "Check Sign In Now", systemImage: "checkmark.circle")
             }
             .disabled(app.isFinishingGitHubDeviceLogin)
             Button("Cancel", role: .cancel) { app.cancelGitHubDeviceLogin() }
@@ -723,6 +740,29 @@ private struct SettingsView: View {
                 Section("Refresh") {
                     Stepper("Every \(refreshIntervalMinutes) minutes", value: $refreshIntervalMinutes, in: 15...240, step: 15)
                     Button("Refresh Now") { Task { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) } }
+                }
+
+                Section("Refresh Diagnostics") {
+                    if let updatedAt = app.refreshDiagnostics.updatedAt {
+                        if let login = app.refreshDiagnostics.githubLogin {
+                            LabeledContent("GitHub User", value: login)
+                        }
+                        LabeledContent("Last Refresh", value: updatedAt.formatted(date: .abbreviated, time: .shortened))
+                        LabeledContent("Tracked Algora Bounties", value: "\(app.refreshDiagnostics.trackedBountyCount)")
+                        LabeledContent("Checked PRs", value: "\(app.refreshDiagnostics.scannedPullRequestCount)")
+                        LabeledContent("Direct Algora Matches", value: "\(app.refreshDiagnostics.claimPullRequestCount)")
+                        LabeledContent("Linked Issue Checks", value: "\(app.refreshDiagnostics.linkedIssueCheckCount)")
+                        LabeledContent("No Algora Evidence", value: "\(app.refreshDiagnostics.skippedPullRequestCount)")
+                        if app.refreshDiagnostics.failedPullRequestCount > 0 {
+                            LabeledContent("Failed PRs", value: "\(app.refreshDiagnostics.failedPullRequestCount)")
+                        }
+                        if app.refreshDiagnostics.warningCount > 0 {
+                            LabeledContent("Warnings", value: "\(app.refreshDiagnostics.warningCount)")
+                        }
+                    } else {
+                        Text("No refresh run yet.")
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Notifications") {

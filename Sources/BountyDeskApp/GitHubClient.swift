@@ -11,7 +11,7 @@ struct GitHubClient {
     func searchClaimPullRequests(username: String, token: String) async throws -> [GitHubSearchItem] {
         let queries = [
             "author:\(username) is:pr /claim in:body,comments",
-            "author:\(username) is:pr @algora-pbc in:body,comments",
+            "author:\(username) is:pr \"@algora-pbc\" in:body,comments",
             "author:\(username) is:pr algora in:title,body,comments",
             "author:\(username) is:pr bounty in:title,body,comments",
             "author:\(username) is:pr commenter:algora-pbc",
@@ -31,11 +31,21 @@ struct GitHubClient {
     private func searchPullRequests(queries: [String], token: String, perPage: Int) async throws -> [GitHubSearchItem] {
         var seen = Set<String>()
         var items: [GitHubSearchItem] = []
+        var firstError: Error?
         for query in queries {
-            let response = try await searchIssues(query: query, token: token, perPage: perPage)
+            let response: GitHubSearchResponse
+            do {
+                response = try await searchIssues(query: query, token: token, perPage: perPage)
+            } catch {
+                if firstError == nil { firstError = error }
+                continue
+            }
             for item in response.items where item.pullRequest != nil && seen.insert(item.htmlUrl).inserted {
                 items.append(item)
             }
+        }
+        if items.isEmpty, let firstError {
+            throw firstError
         }
         return items.sorted { $0.updatedAt > $1.updatedAt }
     }

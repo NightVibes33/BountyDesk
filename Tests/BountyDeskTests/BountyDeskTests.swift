@@ -209,6 +209,44 @@ final class GitHubClientTests: XCTestCase {
         XCTAssertEqual(GitHubClient.repositorySlug(from: items[0].repositoryUrl)?.owner, "org")
     }
 
+    func testPRSearchContinuesAfterSingleQueryFailure() async throws {
+        var queries: [String] = []
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/search/issues")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+            queries.append(query)
+            if query.contains("/claim") {
+                let data = #"{"message":"Validation Failed"}"#.data(using: .utf8)!
+                return (HTTPURLResponse(url: request.url!, statusCode: 422, httpVersion: nil, headerFields: nil)!, data)
+            }
+            let items = query.contains("\"@algora-pbc\"") ? """
+                [{
+                  "url": "https://api.github.com/repos/org/repo/issues/6",
+                  "repository_url": "https://api.github.com/repos/org/repo",
+                  "html_url": "https://github.com/org/repo/pull/6",
+                  "number": 6,
+                  "title": "Claim bounty after failed query",
+                  "body": "@algora-pbc /claim fixes #4",
+                  "state": "open",
+                  "labels": [],
+                  "user": {"login":"tester","avatar_url":null,"html_url":"https://github.com/tester","type":"User"},
+                  "comments": 1,
+                  "updated_at": "2026-05-22T05:00:00Z",
+                  "created_at": "2026-05-22T04:00:00Z",
+                  "pull_request": {"url":"https://api.github.com/repos/org/repo/pulls/6","html_url":"https://github.com/org/repo/pull/6","merged_at":null}
+                }]
+                """ : "[]"
+            let json = """
+            {"total_count":1,"incomplete_results":false,"items":\(items)}
+            """.data(using: .utf8)!
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+        }
+        let items = try await GitHubClient(session: Self.mockSession()).searchClaimPullRequests(username: "tester", token: "secret")
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].number, 6)
+        XCTAssertTrue(queries.contains { $0.contains("\"@algora-pbc\"") })
+    }
+
     func testRecentAuthoredPullRequestSearchUsesBroadOpenClosedQueries() async throws {
         var queries: [String] = []
         MockURLProtocol.handler = { request in
@@ -256,9 +294,12 @@ final class GitHubClientTests: XCTestCase {
             case "/search/issues" where query.contains("author:tester is:pr state:open"):
                 status = 200
                 body = #"{"total_count":1,"incomplete_results":false,"items":[{"url":"https://api.github.com/repos/org/repo/issues/9","repository_url":"https://api.github.com/repos/org/repo","html_url":"https://github.com/org/repo/pull/9","number":9,"title":"Fix linked bounty","body":"Fixes #42","state":"open","labels":[],"user":{"login":"tester","avatar_url":null,"html_url":"https://github.com/tester","type":"User"},"comments":0,"updated_at":"2026-05-22T04:00:00Z","created_at":"2026-05-22T03:00:00Z","pull_request":{"url":"https://api.github.com/repos/org/repo/pulls/9","html_url":"https://github.com/org/repo/pull/9","merged_at":null}}]}"#
-            case "/search/issues":
+            case "/search/issues" where query.contains("author:tester is:pr state:closed"):
                 status = 200
                 body = #"{"total_count":0,"incomplete_results":false,"items":[]}"#
+            case "/search/issues":
+                status = 422
+                body = #"{"message":"Validation Failed"}"#
             case "/repos/org/repo/pulls/9":
                 status = 200
                 body = #"{"html_url":"https://github.com/org/repo/pull/9","number":9,"state":"open","title":"Fix linked bounty","body":"Fixes #42\n\nTests: npm test","draft":false,"merged_at":null,"mergeable":true,"mergeable_state":"clean","user":{"login":"tester","avatar_url":null,"html_url":"https://github.com/tester","type":"User"},"labels":[],"head":{"sha":"abc"},"base":{"sha":"base"},"changed_files":2,"additions":20,"deletions":3,"updated_at":"2026-05-22T04:00:00Z"}"#
@@ -294,6 +335,9 @@ final class GitHubClientTests: XCTestCase {
         )
         let result = await service.refreshCurrentBounties(githubToken: "secret", algoraToken: nil, watchedOrgs: [])
         XCTAssertEqual(result.scannedPullRequestCount, 1)
+        XCTAssertEqual(result.claimPullRequestCount, 0)
+        XCTAssertEqual(result.linkedIssueCheckCount, 1)
+        XCTAssertTrue(result.warnings.contains { $0.contains("Claim PR search failed") })
         XCTAssertEqual(result.bounties.count, 1)
         XCTAssertEqual(result.bounties[0].issueNumber, 42)
         XCTAssertEqual(result.bounties[0].linkedPullRequestNumber, 9)
