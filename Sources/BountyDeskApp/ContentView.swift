@@ -63,82 +63,148 @@ private struct MainTabs: View {
 private struct LoginView: View {
     @EnvironmentObject private var app: BountyTrackerViewModel
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var githubToken = ""
     @State private var algoraToken = ""
     @State private var includePrivateRepositories = false
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("GitHub") {
-                    Button {
-                        Task {
-                            if let url = await app.startGitHubDeviceLogin(includePrivateRepositories: includePrivateRepositories) {
-                                openURL(url)
-                            }
-                        }
-                    } label: {
-                        Label(app.isStartingGitHubDeviceLogin ? "Preparing GitHub" : "Continue with GitHub Passkey", systemImage: "key.horizontal")
-                    }
-                    .disabled(app.isStartingGitHubDeviceLogin || app.isFinishingGitHubDeviceLogin || app.githubDeviceAuthorization != nil)
+            ZStack {
+                BountyBackdrop()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        LoginHero()
 
-                    Toggle("Include private repositories", isOn: $includePrivateRepositories)
-                    Text(includePrivateRepositories ? "GitHub will request private and public repository read access." : "GitHub will request public repository read access.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-
-                    if let authorization = app.githubDeviceAuthorization {
-                        GitHubDeviceLoginPanel(authorization: authorization)
-                    }
-
-                    SecureField("GitHub personal access token", text: $githubToken)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Button("Use GitHub Token") {
-                        Task { await app.saveGitHubToken(githubToken) }
-                    }
-                    .disabled(githubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
-                Section("Optional Algora API Token") {
-                    SecureField("Algora API token", text: $algoraToken)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Button("Save Optional Algora Token") {
-                        app.saveAlgoraToken(algoraToken)
-                    }
-                    Text("A GitHub token is not an Algora API token. Continue without this unless your Algora workspace exposes API keys.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("API Access Help") {
-                    Text(apiAccessHelpText)
-                        .font(.footnote)
-                    Button {
-                        app.copyToClipboard(algoraSupportMessage)
-                    } label: {
-                        Label("Copy Algora Support Message", systemImage: "doc.on.doc")
-                    }
-                }
-
-                if let error = app.authError {
-                    Section {
-                        Label(error, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                        if app.githubDeviceAuthorization != nil {
+                        VStack(alignment: .leading, spacing: 16) {
                             Button {
-                                Task { await app.finishGitHubDeviceLogin() }
+                                Task {
+                                    if let url = await app.startGitHubDeviceLogin(includePrivateRepositories: includePrivateRepositories) {
+                                        openURL(url)
+                                    }
+                                }
                             } label: {
-                                Label("Check Sign In Again", systemImage: "arrow.clockwise.circle")
+                                Label(app.isStartingGitHubDeviceLogin ? "Preparing GitHub" : "Continue with GitHub Passkey", systemImage: "key.horizontal")
+                                    .frame(maxWidth: .infinity)
                             }
-                            .disabled(app.isFinishingGitHubDeviceLogin)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .disabled(app.isStartingGitHubDeviceLogin || app.isFinishingGitHubDeviceLogin || app.githubDeviceAuthorization != nil)
+                            .symbolEffect(.bounce, value: app.githubDeviceAuthorization != nil)
+
+                            Toggle("Include private repositories", isOn: $includePrivateRepositories)
+                            Text(includePrivateRepositories ? "Request private and public repository read access." : "Request public repository read access.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+
+                            if let authorization = app.githubDeviceAuthorization {
+                                GitHubDeviceLoginPanel(authorization: authorization)
+                                    .padding(.vertical, 6)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                            }
+
+                            Divider().overlay(.secondary.opacity(0.25))
+
+                            SecureField("GitHub personal access token", text: $githubToken)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .textFieldStyle(.roundedBorder)
+                            Button {
+                                Task { await app.saveGitHubToken(githubToken) }
+                            } label: {
+                                Label("Use GitHub Token", systemImage: "checkmark.shield")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(githubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                        .padding(18)
+                        .bountyGlassCard(cornerRadius: 8, interactive: true)
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Label("Optional Algora API", systemImage: "link.badge.plus")
+                                .font(.headline)
+                            SecureField("Algora API token", text: $algoraToken)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .textFieldStyle(.roundedBorder)
+                            Button("Save Optional Algora Token") { app.saveAlgoraToken(algoraToken) }
+                                .buttonStyle(.bordered)
+                            Text("Most solver accounts can continue without this. GitHub login is enough for PR, issue, comment, check, and public bounty evidence.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(18)
+                        .bountyGlassCard(cornerRadius: 8)
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(apiAccessHelpText)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Button { app.copyToClipboard(algoraSupportMessage) } label: {
+                                Label("Copy Algora Support Message", systemImage: "doc.on.doc")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        .padding(18)
+                        .bountyGlassCard(cornerRadius: 8)
+
+                        if let error = app.authError {
+                            Label(error, systemImage: "exclamationmark.triangle")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.red)
+                                .padding(14)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .bountyGlassCard(cornerRadius: 8)
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            if app.githubDeviceAuthorization != nil {
+                                Button {
+                                    Task { await app.finishGitHubDeviceLogin() }
+                                } label: {
+                                    Label("Check Sign In Again", systemImage: "arrow.clockwise.circle")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(app.isFinishingGitHubDeviceLogin)
+                            }
                         }
                     }
+                    .padding(20)
+                    .frame(maxWidth: 720)
+                    .frame(maxWidth: .infinity)
                 }
             }
             .navigationTitle("BountyDesk")
+            .navigationBarTitleDisplayMode(.inline)
+            .animation(reduceMotion ? nil : .snappy, value: app.githubDeviceAuthorization != nil)
+            .animation(reduceMotion ? nil : .snappy, value: app.authError)
         }
+    }
+}
+
+private struct LoginHero: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(.green.opacity(0.18))
+                    .frame(width: 76, height: 76)
+                Image(systemName: "target")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(.green)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("BountyDesk")
+                    .font(.largeTitle.weight(.bold))
+                Text("Track Algora bounty PRs, claim status, checks, maintainer signals, and payout risk from GitHub.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .bountyGlassCard(cornerRadius: 8, interactive: true)
     }
 }
 
@@ -205,84 +271,112 @@ private struct DashboardView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if let syncMessage = app.syncMessage {
-                    SyncBanner(message: syncMessage, warnings: app.warnings)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        .listRowBackground(Color.clear)
-                }
-                Section("Overview") {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                        MetricTile(title: "Active Potential", value: totalActiveValue, systemImage: "dollarsign.circle")
-                        MetricTile(title: "Claimed PRs", value: "\(activeClaimedPRCount)", systemImage: "flag")
-                        MetricTile(title: "Pending Review", value: "\(pendingReviewCount)", systemImage: "text.badge.checkmark")
-                        MetricTile(title: "Merged Unpaid", value: "\(mergedUnpaidCount)", systemImage: "arrow.triangle.merge")
-                        MetricTile(title: "Closed/Lost", value: "\(lostCount)", systemImage: "xmark.circle")
-                        MetricTile(title: "Checks Failing", value: "\(failingChecksCount)", systemImage: "xmark.octagon")
-                    }
-                    .padding(.vertical, 8)
-                }
+            ZStack {
+                BountyBackdrop()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        DashboardHero(
+                            totalValue: totalActiveValue,
+                            activeCount: activeBounties.count,
+                            pendingReviewCount: pendingReviewCount,
+                            mergedUnpaidCount: mergedUnpaidCount,
+                            alertCount: alerts.count,
+                            isRefreshing: app.isRefreshing,
+                            trigger: app.refreshDiagnostics.updatedAt
+                        )
 
-                Section("Highest Priority Next Actions") {
-                    if priorityActions.isEmpty {
-                        ContentUnavailableView("No Actions", systemImage: "checkmark.seal", description: Text("Refresh after signing in to build your current bounty tracker."))
-                    } else {
-                        ForEach(priorityActions, id: \.stableID) { bounty in
-                            NavigationLink {
-                                BountyDetailView(bounty: bounty)
-                            } label: {
-                                ActionRow(bounty: bounty)
+                        if let syncMessage = app.syncMessage {
+                            SyncBanner(message: syncMessage, warnings: app.warnings)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            MetricTile(title: "Active Potential", value: totalActiveValue, systemImage: "dollarsign.circle", tint: .green)
+                            MetricTile(title: "Algora PRs", value: "\(activeClaimedPRCount)", systemImage: "flag", tint: .blue)
+                            MetricTile(title: "Pending Review", value: "\(pendingReviewCount)", systemImage: "text.badge.checkmark", tint: .orange)
+                            MetricTile(title: "Merged Unpaid", value: "\(mergedUnpaidCount)", systemImage: "arrow.triangle.merge", tint: .purple)
+                            MetricTile(title: "Closed/Lost", value: "\(lostCount)", systemImage: "xmark.circle", tint: .secondary)
+                            MetricTile(title: "Checks Failing", value: "\(failingChecksCount)", systemImage: "xmark.octagon", tint: .red)
+                        }
+
+                        BountySectionHeader(title: "Highest Priority Next Actions", systemImage: "bolt.badge.clock")
+                        if priorityActions.isEmpty {
+                            EmptyStatePanel(title: "No Actions", systemImage: "checkmark.seal", message: "Refresh after signing in to build your current Algora bounty tracker.")
+                        } else {
+                            VStack(spacing: 10) {
+                                ForEach(priorityActions, id: \.stableID) { bounty in
+                                    NavigationLink {
+                                        BountyDetailView(bounty: bounty)
+                                    } label: {
+                                        ActionRow(bounty: bounty)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        BountySectionHeader(title: "Likely To Pay Soon", systemImage: "banknote")
+                        if likelyToPaySoon.isEmpty {
+                            EmptyStatePanel(title: "No payout signals", systemImage: "hourglass", message: "Accepted, processing, and merged-unpaid bounties will collect here.")
+                        } else {
+                            VStack(spacing: 10) {
+                                ForEach(likelyToPaySoon, id: \.stableID) { bounty in
+                                    BountyCompactRow(bounty: bounty)
+                                }
+                            }
+                        }
+
+                        BountySectionHeader(title: "At Risk", systemImage: "exclamationmark.triangle")
+                        if atRisk.isEmpty {
+                            EmptyStatePanel(title: "No high-risk bounties", systemImage: "shield.checkered", message: "Failing checks, archived repos, and risky payout signals will show here.")
+                        } else {
+                            VStack(spacing: 10) {
+                                ForEach(atRisk, id: \.stableID) { bounty in
+                                    BountyCompactRow(bounty: bounty)
+                                }
+                            }
+                        }
+
+                        BountySectionHeader(title: "Latest Maintainer Comments", systemImage: "text.bubble")
+                        if latestMaintainerComments.isEmpty {
+                            EmptyStatePanel(title: "No maintainer comments", systemImage: "bubble.left", message: "New maintainer signals appear after refresh.")
+                        } else {
+                            VStack(spacing: 10) {
+                                ForEach(latestMaintainerComments, id: \.stableID) { bounty in
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text(bounty.issueSlug).font(.subheadline.weight(.semibold))
+                                        Text(bounty.latestMaintainerComment).font(.footnote).foregroundStyle(.secondary).lineLimit(3)
+                                    }
+                                    .padding(14)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .bountyGlassCard(cornerRadius: 8)
+                                }
                             }
                         }
                     }
+                    .padding(20)
+                    .frame(maxWidth: 920)
+                    .frame(maxWidth: .infinity)
                 }
-
-                Section("Likely To Pay Soon") {
-                    ForEach(likelyToPaySoon, id: \.stableID) { bounty in
-                        BountyCompactRow(bounty: bounty)
-                    }
-                    if likelyToPaySoon.isEmpty {
-                        Text("No accepted, processing, or merged-unpaid bounties yet.")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("At Risk") {
-                    ForEach(atRisk, id: \.stableID) { bounty in
-                        BountyCompactRow(bounty: bounty)
-                    }
-                    if atRisk.isEmpty {
-                        Text("No high-risk tracked bounties.")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Latest Maintainer Comments") {
-                    ForEach(latestMaintainerComments, id: \.stableID) { bounty in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(bounty.issueSlug).font(.subheadline.weight(.semibold))
-                            Text(bounty.latestMaintainerComment).font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                    if latestMaintainerComments.isEmpty {
-                        Text("No maintainer comments detected yet.")
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                .refreshable { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) }
             }
             .navigationTitle("BountyDesk")
-            .refreshable { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) }
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) }
                     } label: {
                         Image(systemName: app.isRefreshing ? "arrow.clockwise.circle.fill" : "arrow.clockwise")
+                            .symbolEffect(.bounce, value: app.isRefreshing)
                     }
                     .disabled(app.isRefreshing)
                     .accessibilityLabel("Refresh bounties")
                 }
             }
+            .sensoryFeedback(.success, trigger: app.refreshDiagnostics.updatedAt)
+            .animation(reduceMotion ? nil : .snappy, value: app.syncMessage)
+            .animation(reduceMotion ? nil : .snappy, value: bounties.count)
         }
     }
 
@@ -318,6 +412,91 @@ private struct DashboardView: View {
     }
 }
 
+private struct DashboardHero: View {
+    let totalValue: String
+    let activeCount: Int
+    let pendingReviewCount: Int
+    let mergedUnpaidCount: Int
+    let alertCount: Int
+    let isRefreshing: Bool
+    let trigger: Date?
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 22) { heroText; Spacer(minLength: 18); BountyOrbitGraphic(trigger: trigger, isRefreshing: isRefreshing) }
+            VStack(alignment: .leading, spacing: 20) { heroText; BountyOrbitGraphic(trigger: trigger, isRefreshing: isRefreshing) }
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .bountyGlassCard(cornerRadius: 8, interactive: true)
+    }
+
+    private var heroText: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Algora bounty command", systemImage: "scope")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(totalValue)
+                .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                .contentTransition(.numericText())
+                .minimumScaleFactor(0.65)
+            Text("\(activeCount) active · \(pendingReviewCount) in review · \(mergedUnpaidCount) merged unpaid")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .contentTransition(.numericText())
+            if alertCount > 0 {
+                StatusChip(text: "\(alertCount) alerts", systemImage: "bell.badge", tint: .orange)
+            }
+        }
+    }
+}
+
+private struct BountyOrbitGraphic: View {
+    let trigger: Date?
+    let isRefreshing: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(.green.opacity(0.25), lineWidth: 18)
+                .frame(width: 118, height: 118)
+            Circle()
+                .stroke(.blue.opacity(0.24), lineWidth: 12)
+                .frame(width: 84, height: 84)
+            Circle()
+                .fill(.green.opacity(0.22))
+                .frame(width: 46, height: 46)
+            Image(systemName: isRefreshing ? "arrow.clockwise" : "bolt.horizontal.circle.fill")
+                .font(.system(size: 32, weight: .semibold))
+                .foregroundStyle(.green)
+                .symbolEffect(.bounce, value: isRefreshing)
+        }
+        .frame(width: 132, height: 132)
+        .phaseAnimator(reduceMotion ? [0] : [0, 1, 2], trigger: trigger) { content, phase in
+            content
+                .scaleEffect(phase == 1 ? 1.04 : 1.0)
+                .rotationEffect(.degrees(phase == 2 ? 6 : 0))
+        } animation: { phase in
+            phase == 1 ? .snappy(duration: 0.28) : .smooth(duration: 0.36)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct EmptyStatePanel: View {
+    let title: String
+    let systemImage: String
+    let message: String
+
+    var body: some View {
+        ContentUnavailableView(title, systemImage: systemImage, description: Text(message))
+            .frame(maxWidth: .infinity)
+            .padding(12)
+            .bountyGlassCard(cornerRadius: 8)
+    }
+}
+
 private struct BountyListView: View {
     @EnvironmentObject private var app: BountyTrackerViewModel
     @Query(sort: \WatchedOrg.handle) private var watchedOrgs: [WatchedOrg]
@@ -329,39 +508,54 @@ private struct BountyListView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    filters
-                }
-                if filteredBounties.isEmpty {
-                    ContentUnavailableView("No Bounties", systemImage: "tray", description: Text("Sync GitHub claims, discover public bounties, or import a URL."))
-                } else {
-                    ForEach(filteredBounties, id: \.stableID) { bounty in
-                        NavigationLink {
-                            BountyDetailView(bounty: bounty)
-                        } label: {
-                            BountyRow(bounty: bounty)
-                        }
-                        .contextMenu {
-                            Link("Open GitHub Issue", destination: bounty.githubIssueURL)
-                            Link("Open Algora Page", destination: bounty.algoraIssueURL)
-                            if let url = bounty.pullRequestURL { Link("Open Pull Request", destination: url) }
+            ZStack {
+                BountyBackdrop()
+                List {
+                    Section {
+                        filters
+                    }
+                    .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
+                    .listRowBackground(Color.clear)
+
+                    if filteredBounties.isEmpty {
+                        ContentUnavailableView("No Algora Bounty PRs", systemImage: "tray", description: Text("Sync GitHub claims, discover public bounties, or import a URL."))
+                            .listRowBackground(Color.clear)
+                    } else {
+                        ForEach(filteredBounties, id: \.stableID) { bounty in
+                            NavigationLink {
+                                BountyDetailView(bounty: bounty)
+                            } label: {
+                                BountyRow(bounty: bounty)
+                            }
+                            .buttonStyle(.plain)
+                            .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
+                            .listRowBackground(Color.clear)
+                            .contextMenu {
+                                Link("Open GitHub Issue", destination: bounty.githubIssueURL)
+                                Link("Open Algora Page", destination: bounty.algoraIssueURL)
+                                if let url = bounty.pullRequestURL { Link("Open Pull Request", destination: url) }
+                            }
                         }
                     }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .refreshable { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) }
             }
             .searchable(text: $searchText, prompt: "Repo, title, label, next action")
-            .navigationTitle("Current Bounties")
-            .refreshable { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) }
+            .navigationTitle("Algora Bounties")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { isAdding = true } label: { Image(systemName: "plus") }
                         .accessibilityLabel("Import bounty URL")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { Task { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) } } label: { Image(systemName: "arrow.clockwise") }
-                        .disabled(app.isRefreshing)
-                        .accessibilityLabel("Refresh")
+                    Button { Task { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) } } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .symbolEffect(.bounce, value: app.isRefreshing)
+                    }
+                    .disabled(app.isRefreshing)
+                    .accessibilityLabel("Refresh")
                 }
             }
             .sheet(isPresented: $isAdding) { AddBountyView() }
@@ -369,7 +563,16 @@ private struct BountyListView: View {
     }
 
     private var filters: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
+                    .font(.headline)
+                Spacer()
+                Text("\(filteredBounties.count)")
+                    .font(.headline.monospacedDigit())
+                    .contentTransition(.numericText())
+                    .foregroundStyle(.secondary)
+            }
             Picker("Status", selection: Binding(get: { selectedStatus }, set: { selectedStatus = $0 })) {
                 Text("All").tag(nil as BountyWorkflowStatus?)
                 ForEach(BountyWorkflowStatus.allCases) { status in Text(status.rawValue).tag(status as BountyWorkflowStatus?) }
@@ -382,7 +585,8 @@ private struct BountyListView: View {
             }
             .pickerStyle(.segmented)
         }
-        .padding(.vertical, 4)
+        .padding(14)
+        .bountyGlassCard(cornerRadius: 8, interactive: true)
     }
 
     private var filteredBounties: [Bounty] {
@@ -841,21 +1045,37 @@ private struct BountyRow: View {
     let bounty: Bounty
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(bounty.title).font(.headline).lineLimit(2)
-                Spacer()
-                Text(bounty.payoutText).font(.subheadline.weight(.semibold)).foregroundStyle(.green)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(bounty.title)
+                        .font(.headline.weight(.semibold))
+                        .lineLimit(2)
+                    Text(bounty.issueSlug)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Text(bounty.payoutText)
+                    .font(.headline.monospacedDigit().weight(.bold))
+                    .foregroundStyle(.green)
+                    .contentTransition(.numericText())
             }
-            Text(bounty.issueSlug).font(.subheadline).foregroundStyle(.secondary)
             HStack(spacing: 8) {
-                StatusChip(text: bounty.workflowStatus.rawValue, systemImage: bounty.workflowStatus.systemImage, tint: .blue)
-                StatusChip(text: bounty.checkState.rawValue, systemImage: bounty.checkState.systemImage, tint: bounty.checkState == .failing ? .red : .green)
+                StatusChip(text: bounty.workflowStatus.rawValue, systemImage: bounty.workflowStatus.systemImage, tint: bounty.workflowStatus.tint)
+                StatusChip(text: bounty.checkState.rawValue, systemImage: bounty.checkState.systemImage, tint: bounty.checkState.tint)
                 RiskChip(level: bounty.riskLevel)
             }
-            Text(bounty.nextAction).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+            BountyProgressRail(level: bounty.riskLevel, chance: bounty.payoutChance)
+            Text(bounty.nextAction)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
-        .padding(.vertical, 6)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .bountyGlassCard(cornerRadius: 8, interactive: true)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -866,15 +1086,25 @@ private struct BountyCompactRow: View {
         NavigationLink {
             BountyDetailView(bounty: bounty)
         } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
                     Text(bounty.issueSlug).font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Text(bounty.payoutText).foregroundStyle(.green)
+                    Text(bounty.title).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                 }
-                Text(bounty.title).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text(bounty.payoutText)
+                        .font(.subheadline.monospacedDigit().weight(.bold))
+                        .foregroundStyle(.green)
+                        .contentTransition(.numericText())
+                    RiskChip(level: bounty.riskLevel)
+                }
             }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .bountyGlassCard(cornerRadius: 8, interactive: true)
         }
+        .buttonStyle(.plain)
     }
 }
 
@@ -882,23 +1112,28 @@ private struct BountySnapshotRow: View {
     let snapshot: TrackedBountySnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(snapshot.title).font(.headline).lineLimit(2)
-                Spacer()
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(snapshot.title).font(.headline.weight(.semibold)).lineLimit(2)
+                    Text("\(snapshot.repoOwner)/\(snapshot.repoName)#\(snapshot.issueNumber)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
                 Text(snapshot.amount > 0 ? snapshot.amount.formatted(.currency(code: snapshot.currency).precision(.fractionLength(0))) : "TBD")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.headline.monospacedDigit().weight(.bold))
                     .foregroundStyle(.green)
+                    .contentTransition(.numericText())
             }
-            Text("\(snapshot.repoOwner)/\(snapshot.repoName)#\(snapshot.issueNumber)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
             HStack {
                 RiskChip(level: snapshot.riskLevel)
                 StatusChip(text: "\(snapshot.competitionCount) signals", systemImage: "person.3", tint: .secondary)
             }
             Text(snapshot.nextAction).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
         }
+        .padding(14)
+        .bountyGlassCard(cornerRadius: 8)
     }
 }
 
@@ -906,14 +1141,26 @@ private struct ActionRow: View {
     let bounty: Bounty
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(bounty.issueSlug).font(.subheadline.weight(.semibold))
-                Spacer()
-                RiskChip(level: bounty.riskLevel)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: bounty.riskLevel == .high ? "exclamationmark.triangle.fill" : bounty.workflowStatus.systemImage)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(bounty.riskLevel.tint)
+                .frame(width: 32, height: 32)
+                .background(bounty.riskLevel.tint.opacity(0.14), in: Circle())
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(bounty.issueSlug).font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 8)
+                    Text(bounty.payoutText)
+                        .font(.subheadline.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.green)
+                }
+                Text(bounty.nextAction).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
             }
-            Text(bounty.nextAction).font(.footnote).foregroundStyle(.secondary)
         }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .bountyGlassCard(cornerRadius: 8, interactive: true)
     }
 }
 
@@ -921,20 +1168,34 @@ private struct MetricTile: View {
     let title: String
     let value: String
     let systemImage: String
+    let tint: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: systemImage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: systemImage)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 30, height: 30)
+                    .background(tint.opacity(0.14), in: Circle())
+                Spacer()
+            }
             Text(value)
-                .font(.title3.weight(.semibold))
+                .font(.title3.monospacedDigit().weight(.bold))
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.65)
+                .contentTransition(.numericText())
+                .animation(reduceMotion ? nil : .snappy, value: value)
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .padding(14)
+        .bountyGlassCard(cornerRadius: 8, interactive: true)
         .accessibilityElement(children: .combine)
     }
 }
@@ -944,15 +1205,40 @@ private struct SyncBanner: View {
     let warnings: [String]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(message, systemImage: warnings.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
-                .font(.subheadline)
+        VStack(alignment: .leading, spacing: 8) {
+            Label(message, systemImage: warnings.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(warnings.isEmpty ? .green : .orange)
+                .symbolEffect(.bounce, value: warnings.count)
             ForEach(warnings.prefix(3), id: \.self) { warning in
                 Text(warning).font(.caption).foregroundStyle(.secondary)
             }
         }
-        .padding(12)
-        .floatingGlassControl()
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .bountyGlassCard(cornerRadius: 8, interactive: true)
+    }
+}
+
+private struct BountyProgressRail: View {
+    let level: RiskLevel
+    let chance: Int
+
+    private var normalizedChance: CGFloat {
+        CGFloat(min(max(chance, 0), 100)) / 100
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.secondary.opacity(0.16))
+                Capsule()
+                    .fill(level.tint.gradient)
+                    .frame(width: max(8, proxy.size.width * normalizedChance))
+            }
+        }
+        .frame(height: 5)
+        .accessibilityLabel("Payout chance \(chance) percent")
     }
 }
 
@@ -967,9 +1253,9 @@ private struct StatusChip: View {
             .lineLimit(1)
             .minimumScaleFactor(0.75)
             .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.vertical, 5)
             .foregroundStyle(tint)
-            .background(tint.opacity(0.12), in: Capsule())
+            .background(tint.opacity(0.13), in: Capsule())
             .accessibilityLabel(text)
     }
 }
@@ -978,15 +1264,7 @@ private struct RiskChip: View {
     let level: RiskLevel
 
     var body: some View {
-        StatusChip(text: "\(level.rawValue) Risk", systemImage: "gauge.with.dots.needle.67percent", tint: tint)
-    }
-
-    private var tint: Color {
-        switch level {
-        case .low: return .green
-        case .medium: return .orange
-        case .high: return .red
-        }
+        StatusChip(text: "\(level.rawValue) Risk", systemImage: "gauge.with.dots.needle.67percent", tint: level.tint)
     }
 }
 
