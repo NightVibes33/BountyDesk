@@ -11,15 +11,21 @@ struct BountyTrackerService {
             let user = try await github.validateToken(githubToken)
             result.user = user
             let claimPRs = try await github.searchClaimPullRequests(username: user.login, token: githubToken)
-            for item in claimPRs.prefix(40) {
+            let recentPRs = (try? await github.searchRecentAuthoredPullRequests(username: user.login, token: githubToken)) ?? []
+            let directClaimURLs = Set(claimPRs.map(\.htmlUrl))
+            let candidates = dedupeSearchItems(claimPRs + recentPRs)
+            result.scannedPullRequestCount = candidates.count
+            for item in candidates.prefix(90) {
                 do {
-                    let built = try await buildTrackedBounty(from: item, username: user.login, token: githubToken)
+                    let built = try await buildTrackedBounty(from: item, username: user.login, token: githubToken, allowDirectBotClaim: directClaimURLs.contains(item.htmlUrl))
                     result.bounties.append(built.bounty)
                     result.pullRequests.append(built.pullRequest)
                     result.issues.append(built.issue)
                     result.ruleSets.append(built.ruleSet)
                     result.competitors.append(contentsOf: built.competitors)
                     result.riskSnapshots.append(built.riskSnapshot)
+                } catch BountyTrackerServiceError.noBountyEvidence {
+                    continue
                 } catch {
                     result.warnings.append("Skipped \(item.htmlUrl): \(error.localizedDescription)")
                 }
@@ -81,7 +87,7 @@ struct BountyTrackerService {
         return nil
     }
 
-    private func buildTrackedBounty(from item: GitHubSearchItem, username: String, token: String) async throws -> BuiltBounty {
+    private func buildTrackedBounty(from item: GitHubSearchItem, username: String, token: String, allowDirectBotClaim: Bool) async throws -> BuiltBounty {
         guard let slug = GitHubClient.repositorySlug(from: item.repositoryUrl) else { throw GitHubAPIError.invalidURL }
         async let prTask = github.pullRequest(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
         async let prIssueCommentsTask = github.issueComments(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
@@ -92,14 +98,8 @@ struct BountyTrackerService {
         let issueNumber = linkedIssues.first ?? item.number
         async let issueTask = github.issue(owner: slug.owner, repo: slug.repo, number: issueNumber, token: token)
         async let issueCommentsTask = github.issueComments(owner: slug.owner, repo: slug.repo, number: issueNumber, token: token)
-        async let repositoryTask = github.repository(owner: slug.owner, repo: slug.repo, token: token)
-        async let checksTask = github.checkRuns(owner: slug.owner, repo: slug.repo, ref: pr.head.sha, token: token)
-        async let statusTask = github.combinedStatus(owner: slug.owner, repo: slug.repo, ref: pr.head.sha, token: token)
         let issue = (try? await issueTask) ?? fallbackIssue(from: item, owner: slug.owner, repo: slug.repo, number: issueNumber)
         let issueComments = (try? await issueCommentsTask) ?? []
-        let repository = try? await repositoryTask
-        let checkRuns = try? await checksTask
-        let statuses = try? await statusTask
         let allComments = prIssueComments + issueComments
         let labels = Array(Set((item.labels + (pr.labels ?? []) + issue.labels).map(\.name))).sorted()
         let bodyCorpus = [issue.body, pr.body, item.body].compactMap { $0 }.joined(separator: "\n")
@@ -107,14 +107,38 @@ struct BountyTrackerService {
         let textCorpus = ([bodyCorpus] + commentCorpus).joined(separator: "\n")
         let amount = BountyParsing.bountyAmount(in: labels.joined(separator: " ") + "\n" + textCorpus) ?? 0
         let claimStatus = BountyParsing.paymentStatus(in: textCorpus) ?? BountyParsing.claimStatus(in: textCorpus) ?? .unknown
-        let checkState = resolveCheckState(checkRuns: checkRuns, statuses: statuses)
         let prState = resolvePullRequestState(pr)
         let issueState = issue.state.lowercased() == "closed" ? IssueState.closed : IssueState.open
+        let latestMaintainer = BountyParsing.latestMaintainerComment(from: allComments, excluding: username)
+        let latestBot = BountyParsing.latestBotComment(from: allComments)
+        let evidence = BountyParsing.algoraEvidence(labels: labels, body: bodyCorpus, comments: commentCorpus)
+        let rewardLinks = BountyParsing.rewardLinks(in: textCorpus)
+        let evidenceText = ([issue.title, pr.title, prBody, latestBot, latestMaintainer] + labels + evidence).joined(separator: "\n")
+        guard evidence.isEmpty == false
+            || amount > 0
+            || claimStatus != .unknown
+            || rewardLinks.isEmpty == false
+            || BountyParsing.containsClaimMarker(evidenceText)
+            || (allowDirectBotClaim && latestBot.isEmpty == false)
+        else {
+            throw BountyTrackerServiceError.noBountyEvidence
+        }
+
+        async let repositoryTask = github.repository(owner: slug.owner, repo: slug.repo, token: token)
+        async let checksTask = github.checkRuns(owner: slug.owner, repo: slug.repo, ref: pr.head.sha, token: token)
+        async let statusTask = github.combinedStatus(owner: slug.owner, repo: slug.repo, ref: pr.head.sha, token: token)
+        async let codeOfConductTask = firstRepositoryFile(owner: slug.owner, repo: slug.repo, paths: ["CODE_OF_CONDUCT.md", ".github/CODE_OF_CONDUCT.md"], token: token)
+        async let contributingTask = firstRepositoryFile(owner: slug.owner, repo: slug.repo, paths: ["CONTRIBUTING.md", ".github/CONTRIBUTING.md"], token: token)
+        async let readmeTask = firstRepositoryFile(owner: slug.owner, repo: slug.repo, paths: ["README.md", "readme.md"], token: token)
+        let repository = try? await repositoryTask
+        let checkRuns = try? await checksTask
+        let statuses = try? await statusTask
+        let checkState = resolveCheckState(checkRuns: checkRuns, statuses: statuses)
         let competitors = await competitorSnapshots(owner: slug.owner, repo: slug.repo, issueNumber: issueNumber, username: username, ownPR: pr.number, token: token)
         let competitorMerged = competitors.contains { $0.state == .merged }
-        let codeOfConduct = await firstRepositoryFile(owner: slug.owner, repo: slug.repo, paths: ["CODE_OF_CONDUCT.md", ".github/CODE_OF_CONDUCT.md"], token: token)
-        let contributing = await firstRepositoryFile(owner: slug.owner, repo: slug.repo, paths: ["CONTRIBUTING.md", ".github/CONTRIBUTING.md"], token: token)
-        let readme = await firstRepositoryFile(owner: slug.owner, repo: slug.repo, paths: ["README.md", "readme.md"], token: token)
+        let codeOfConduct = await codeOfConductTask
+        let contributing = await contributingTask
+        let readme = await readmeTask
         let rulesCorpus = [codeOfConduct, contributing, readme, issue.body].compactMap { $0 }.joined(separator: "\n")
         let requiresVideo = BountyParsing.requiresVideo(in: rulesCorpus + "\n" + textCorpus)
         let hasDemoProof = BountyParsing.hasDemoProof(in: prBody + "\n" + prIssueComments.map(\.body).joined(separator: "\n"))
@@ -124,8 +148,6 @@ struct BountyTrackerService {
         let priorRejected = BountyParsing.priorRejectedSignal(in: textCorpus, username: username)
         let hasVerification = BountyParsing.hasClearVerification(in: prBody)
         let hasTests = BountyParsing.hasTests(in: prBody)
-        let latestMaintainer = BountyParsing.latestMaintainerComment(from: allComments, excluding: username)
-        let latestBot = BountyParsing.latestBotComment(from: allComments)
         let rewarded = claimStatus == .paymentSucceeded || textCorpus.lowercased().contains("total paid") || textCorpus.lowercased().contains("rewarded")
         let riskInput = RiskInput(
             pullRequestState: prState,
@@ -151,8 +173,6 @@ struct BountyTrackerService {
         let risk = riskScoring.score(riskInput)
         let stableID = "github:\(slug.owner)/\(slug.repo)#\(issueNumber):pr\(pr.number)"
         let now = Date()
-        let evidence = BountyParsing.algoraEvidence(labels: labels, body: bodyCorpus, comments: commentCorpus)
-        let rewardLinks = BountyParsing.rewardLinks(in: textCorpus)
         let bounty = TrackedBountySnapshot(
             stableID: stableID,
             source: .github,
@@ -594,10 +614,16 @@ struct BountyTrackerService {
         var seen = Set<String>()
         return values.filter { seen.insert($0[keyPath: keyPath]).inserted }
     }
+
+    private func dedupeSearchItems(_ values: [GitHubSearchItem]) -> [GitHubSearchItem] {
+        var seen = Set<String>()
+        return values.filter { seen.insert($0.htmlUrl).inserted }
+    }
 }
 
 struct TrackerRefreshResult {
     var user: GitHubUser?
+    var scannedPullRequestCount = 0
     var bounties: [TrackedBountySnapshot] = []
     var pullRequests: [PullRequestSnapshot] = []
     var issues: [GitHubIssueSnapshot] = []
@@ -611,6 +637,16 @@ struct TrackerRefreshResult {
 struct DiscoverResult {
     var bounties: [TrackedBountySnapshot] = []
     var warnings: [String] = []
+}
+
+enum BountyTrackerServiceError: LocalizedError, Equatable {
+    case noBountyEvidence
+
+    var errorDescription: String? {
+        switch self {
+        case .noBountyEvidence: return "No Algora-backed bounty evidence was found on this pull request."
+        }
+    }
 }
 
 struct DiscoverFilters: Equatable {

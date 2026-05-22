@@ -124,7 +124,11 @@ final class BountyTrackerViewModel: ObservableObject {
             }
             try apply(result: result, previousBounties: previous)
             let count = result.bounties.count
-            syncMessage = count == 0 ? "Refresh finished. No claimed Algora bounty PRs were found for this account." : "Refresh finished. Updated \(count) tracked bounties."
+            if count == 0 {
+                syncMessage = "Refresh finished. Scanned \(result.scannedPullRequestCount) recent PRs but found no Algora-backed bounty evidence. Import a GitHub issue or PR URL if the bounty is outside your recent authored PRs."
+            } else {
+                syncMessage = "Refresh finished. Updated \(count) tracked bounties from \(result.scannedPullRequestCount) scanned PRs."
+            }
         } catch {
             syncMessage = error.localizedDescription
         }

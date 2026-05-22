@@ -146,6 +146,97 @@ final class GitHubClientTests: XCTestCase {
         XCTAssertEqual(GitHubClient.repositorySlug(from: items[0].repositoryUrl)?.owner, "org")
     }
 
+    func testRecentAuthoredPullRequestSearchUsesBroadOpenClosedQueries() async throws {
+        var queries: [String] = []
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/search/issues")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+            queries.append(query)
+            let items = query.contains("state:open") ? """
+                [{
+                  "url": "https://api.github.com/repos/org/repo/issues/9",
+                  "repository_url": "https://api.github.com/repos/org/repo",
+                  "html_url": "https://github.com/org/repo/pull/9",
+                  "number": 9,
+                  "title": "Fix linked bounty",
+                  "body": "Fixes #42",
+                  "state": "open",
+                  "labels": [],
+                  "user": {"login":"tester","avatar_url":null,"html_url":"https://github.com/tester","type":"User"},
+                  "comments": 0,
+                  "updated_at": "2026-05-22T04:00:00Z",
+                  "created_at": "2026-05-22T03:00:00Z",
+                  "pull_request": {"url":"https://api.github.com/repos/org/repo/pulls/9","html_url":"https://github.com/org/repo/pull/9","merged_at":null}
+                }]
+                """ : "[]"
+            let json = """
+            {"total_count":1,"incomplete_results":false,"items":\(items)}
+            """.data(using: .utf8)!
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+        }
+        let items = try await GitHubClient(session: Self.mockSession()).searchRecentAuthoredPullRequests(username: "tester", token: "secret")
+        XCTAssertEqual(items.count, 1)
+        XCTAssertTrue(queries.contains { $0.contains("state:open") })
+        XCTAssertTrue(queries.contains { $0.contains("state:closed") })
+    }
+
+    func testRefreshFindsBountyFromRecentPRLinkedIssue() async {
+        MockURLProtocol.handler = { request in
+            let path = request.url!.path
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+            let body: String
+            let status: Int
+            switch path {
+            case "/user":
+                status = 200
+                body = #"{"login":"tester","avatar_url":null,"html_url":"https://github.com/tester"}"#
+            case "/search/issues" where query.contains("author:tester is:pr state:open"):
+                status = 200
+                body = #"{"total_count":1,"incomplete_results":false,"items":[{"url":"https://api.github.com/repos/org/repo/issues/9","repository_url":"https://api.github.com/repos/org/repo","html_url":"https://github.com/org/repo/pull/9","number":9,"title":"Fix linked bounty","body":"Fixes #42","state":"open","labels":[],"user":{"login":"tester","avatar_url":null,"html_url":"https://github.com/tester","type":"User"},"comments":0,"updated_at":"2026-05-22T04:00:00Z","created_at":"2026-05-22T03:00:00Z","pull_request":{"url":"https://api.github.com/repos/org/repo/pulls/9","html_url":"https://github.com/org/repo/pull/9","merged_at":null}}]}"#
+            case "/search/issues":
+                status = 200
+                body = #"{"total_count":0,"incomplete_results":false,"items":[]}"#
+            case "/repos/org/repo/pulls/9":
+                status = 200
+                body = #"{"html_url":"https://github.com/org/repo/pull/9","number":9,"state":"open","title":"Fix linked bounty","body":"Fixes #42\n\nTests: npm test","draft":false,"merged_at":null,"mergeable":true,"mergeable_state":"clean","user":{"login":"tester","avatar_url":null,"html_url":"https://github.com/tester","type":"User"},"labels":[],"head":{"sha":"abc"},"base":{"sha":"base"},"changed_files":2,"additions":20,"deletions":3,"updated_at":"2026-05-22T04:00:00Z"}"#
+            case "/repos/org/repo/issues/9/comments":
+                status = 200
+                body = "[]"
+            case "/repos/org/repo/issues/42":
+                status = 200
+                body = #"{"html_url":"https://github.com/org/repo/issues/42","number":42,"state":"open","title":"Add bounty feature","body":"Total prize pool: $750\n@algora-pbc /bounty","labels":[{"name":"💎 Bounty"}],"user":{"login":"maintainer","avatar_url":null,"html_url":"https://github.com/maintainer","type":"User"},"assignees":[],"updated_at":"2026-05-22T02:00:00Z","closed_at":null}"#
+            case "/repos/org/repo/issues/42/comments":
+                status = 200
+                body = #"[{"id":1,"body":"Algora bot: Status Pending","user":{"login":"algora-pbc","avatar_url":null,"html_url":"https://github.com/algora-pbc","type":"Bot"},"html_url":"https://github.com/org/repo/issues/42#issuecomment-1","created_at":"2026-05-22T02:30:00Z","updated_at":"2026-05-22T02:30:00Z"}]"#
+            case "/repos/org/repo":
+                status = 200
+                body = #"{"full_name":"org/repo","archived":false,"default_branch":"main"}"#
+            case "/repos/org/repo/commits/abc/check-runs":
+                status = 200
+                body = #"{"total_count":0,"check_runs":[]}"#
+            case "/repos/org/repo/commits/abc/status":
+                status = 200
+                body = #"{"state":"success","statuses":[]}"#
+            default:
+                status = path.contains("/contents/") ? 404 : 500
+                body = #"{"message":"not found"}"#
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, body.data(using: .utf8)!)
+        }
+        let session = Self.mockSession()
+        let service = BountyTrackerService(
+            github: GitHubClient(session: session),
+            algoraPublic: AlgoraPublicClient(session: session),
+            riskScoring: RiskScoringService()
+        )
+        let result = await service.refreshCurrentBounties(githubToken: "secret", algoraToken: nil, watchedOrgs: [])
+        XCTAssertEqual(result.scannedPullRequestCount, 1)
+        XCTAssertEqual(result.bounties.count, 1)
+        XCTAssertEqual(result.bounties[0].issueNumber, 42)
+        XCTAssertEqual(result.bounties[0].linkedPullRequestNumber, 9)
+        XCTAssertEqual(result.bounties[0].amount, 750)
+    }
+
     static func mockSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

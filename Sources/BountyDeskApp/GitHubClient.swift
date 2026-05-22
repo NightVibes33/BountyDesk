@@ -10,16 +10,29 @@ struct GitHubClient {
 
     func searchClaimPullRequests(username: String, token: String) async throws -> [GitHubSearchItem] {
         let queries = [
-            "author:\(username) type:pr /claim",
-            "author:\(username) type:pr @algora-pbc",
-            "author:\(username) type:pr algora",
-            "author:\(username) type:pr bounty",
-            "author:\(username) type:pr label:\"🙋 Bounty claim\""
+            "author:\(username) is:pr /claim in:body,comments",
+            "author:\(username) is:pr @algora-pbc in:body,comments",
+            "author:\(username) is:pr algora in:title,body,comments",
+            "author:\(username) is:pr bounty in:title,body,comments",
+            "author:\(username) is:pr commenter:algora-pbc",
+            "author:\(username) is:pr label:\"🙋 Bounty claim\""
         ]
+        return try await searchPullRequests(queries: queries, token: token, perPage: 75)
+    }
+
+    func searchRecentAuthoredPullRequests(username: String, token: String) async throws -> [GitHubSearchItem] {
+        let queries = [
+            "author:\(username) is:pr state:open",
+            "author:\(username) is:pr state:closed"
+        ]
+        return try await searchPullRequests(queries: queries, token: token, perPage: 100)
+    }
+
+    private func searchPullRequests(queries: [String], token: String, perPage: Int) async throws -> [GitHubSearchItem] {
         var seen = Set<String>()
         var items: [GitHubSearchItem] = []
         for query in queries {
-            let response = try await searchIssues(query: query, token: token, perPage: 50)
+            let response = try await searchIssues(query: query, token: token, perPage: perPage)
             for item in response.items where item.pullRequest != nil && seen.insert(item.htmlUrl).inserted {
                 items.append(item)
             }
