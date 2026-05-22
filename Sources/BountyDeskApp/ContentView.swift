@@ -519,7 +519,7 @@ private struct BountyListView: View {
                     .listRowBackground(Color.clear)
 
                     if filteredBounties.isEmpty {
-                        ContentUnavailableView("No Algora Bounty PRs", systemImage: "tray", description: Text("Sync GitHub claims, discover public bounties, or import a URL."))
+                        ContentUnavailableView("No Verified Algora Bounty PRs", systemImage: "tray", description: Text("Excluded issues need an algora-pbc[bot] comment with amount and claim flow."))
                             .listRowBackground(Color.clear)
                     } else {
                         ForEach(filteredBounties, id: \.stableID) { bounty in
@@ -701,7 +701,11 @@ private struct BountyDetailView: View {
             BountyBackdrop()
             List {
             Section("Summary") {
+                LabeledContent("Source", value: "Verified Algora bounty")
                 HStack { Text("Payout"); Spacer(); Text(bounty.payoutText).fontWeight(.semibold) }
+                LabeledContent("Attempt / Claim Flow", value: bounty.algoraEvidence.contains("Algora claim flow found") ? "Detected" : "Missing")
+                LabeledContent("Reward Status", value: bounty.hasRewardedSignal ? "Rewarded or paid" : bounty.claimStatus.rawValue)
+                LabeledContent("Last Checked", value: bounty.lastRefreshedAt?.formatted(date: .abbreviated, time: .shortened) ?? "Not checked")
                 LabeledContent("Risk", value: "\(bounty.riskLevel.rawValue) · \(bounty.payoutChance)%")
                 LabeledContent("Next Action", value: bounty.nextAction)
                 HStack(spacing: 8) {
@@ -1048,8 +1052,8 @@ private struct SettingsView: View {
                         LabeledContent("Last Refresh", value: updatedAt.formatted(date: .abbreviated, time: .shortened))
                         LabeledContent("Tracked Algora Bounties", value: "\(app.refreshDiagnostics.trackedBountyCount)")
                         LabeledContent("Checked PRs", value: "\(app.refreshDiagnostics.scannedPullRequestCount)")
-                        LabeledContent("Direct Algora Matches", value: "\(app.refreshDiagnostics.claimPullRequestCount)")
-                        LabeledContent("Active Algora Matches", value: "\(app.refreshDiagnostics.activeClaimPullRequestCount)")
+                        LabeledContent("Claim Candidates", value: "\(app.refreshDiagnostics.claimPullRequestCount)")
+                        LabeledContent("Verified Active Claims", value: "\(app.refreshDiagnostics.activeClaimPullRequestCount)")
                         LabeledContent("Linked Issue Checks", value: "\(app.refreshDiagnostics.linkedIssueCheckCount)")
                         LabeledContent("No Algora Evidence", value: "\(app.refreshDiagnostics.skippedPullRequestCount)")
                         if app.refreshDiagnostics.failedPullRequestCount > 0 {
@@ -1118,7 +1122,7 @@ private struct AddBountyView: View {
                     }
                 }
                 Section("Import") {
-                    Text("Manual imports are not seeded data. They create a draft record from the URL, then GitHub refresh fills live issue, PR, checks, rules, and competition data when possible.")
+                    Text("Manual payout, Gitcoin, crypto wallet, PayPal, BTC, sats, USDC, and generic bounty URLs are excluded. BountyDesk only tracks GitHub issues verified by algora-pbc[bot] with amount and claim flow.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -1133,7 +1137,7 @@ private struct AddBountyView: View {
                         if app.addManualURL(urlText) {
                             dismiss()
                         } else {
-                            errorMessage = "Enter a GitHub issue/PR URL or an Algora issue URL."
+                            errorMessage = "Not Algora. Excluded: no Algora bot / no Algora claim flow."
                         }
                     }
                 }

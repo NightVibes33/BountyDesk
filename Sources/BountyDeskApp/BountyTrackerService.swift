@@ -25,7 +25,7 @@ struct BountyTrackerService {
                 result.warnings.append("Linked-issue evidence check failed: \(error.localizedDescription).")
             }
             result.claimPullRequestCount = claimPRs.count
-            result.activeClaimPullRequestCount = claimPRs.filter { $0.state.lowercased() == "open" }.count
+            result.activeClaimPullRequestCount = 0
             result.linkedIssueCheckCount = recentPRs.count
             let directClaimURLs = Set(claimPRs.map(\.htmlUrl))
             let candidates = dedupeSearchItems(claimPRs + recentPRs)
@@ -39,6 +39,9 @@ struct BountyTrackerService {
                     result.ruleSets.append(built.ruleSet)
                     result.competitors.append(contentsOf: built.competitors)
                     result.riskSnapshots.append(built.riskSnapshot)
+                    if built.pullRequest.state == .open || built.pullRequest.state == .draft {
+                        result.activeClaimPullRequestCount += 1
+                    }
                 } catch BountyTrackerServiceError.noBountyEvidence {
                     result.skippedPullRequestCount += 1
                     continue
@@ -51,7 +54,7 @@ struct BountyTrackerService {
             result.warnings.append(error.localizedDescription)
         }
 
-        await mergeAlgoraData(into: &result, algoraToken: algoraToken, watchedOrgs: watchedOrgs)
+        await mergeAlgoraData(into: &result, githubToken: githubToken, algoraToken: algoraToken, watchedOrgs: watchedOrgs)
         result.bounties = dedupe(result.bounties, by: \.stableID)
         result.pullRequests = dedupe(result.pullRequests, by: \.stableID)
         result.issues = dedupe(result.issues, by: \.stableID)
@@ -65,7 +68,7 @@ struct BountyTrackerService {
         do {
             let items = try await github.searchOpenBountyIssues(token: githubToken, org: filters.org.nilIfBlank, repo: filters.repo.nilIfBlank, language: filters.language.nilIfBlank, perPage: 50)
             for item in items {
-                guard let snapshot = openIssueSnapshot(from: item) else { continue }
+                guard let snapshot = await openIssueSnapshot(from: item, token: githubToken) else { continue }
                 if filters.matches(snapshot: snapshot, commentCount: item.comments ?? 0) {
                     result.bounties.append(snapshot)
                 }
@@ -77,8 +80,11 @@ struct BountyTrackerService {
         if let org = filters.org.nilIfBlank {
             do {
                 let algoraBounties = try await algoraPublic.bounties(org: org, limit: 100)
-                for dto in algoraBounties.compactMap({ algoraSnapshot(from: $0, source: .algoraPublic) }) where filters.matches(snapshot: dto, commentCount: 0) {
-                    result.bounties.append(dto)
+                for dto in algoraBounties {
+                    guard let snapshot = await algoraSnapshot(from: dto, source: .algoraPublic, githubToken: githubToken) else { continue }
+                    if filters.matches(snapshot: snapshot, commentCount: 0) {
+                        result.bounties.append(snapshot)
+                    }
                 }
             } catch {
                 result.warnings.append("Public Algora discovery failed for \(org): \(error.localizedDescription)")
@@ -90,18 +96,7 @@ struct BountyTrackerService {
     }
 
     func manualSnapshot(from text: String) -> TrackedBountySnapshot? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), let host = url.host?.lowercased() else { return nil }
-        let parts = url.pathComponents.filter { $0 != "/" }
-        if host == "github.com" || host == "www.github.com" {
-            guard parts.count >= 4, ["issues", "pull"].contains(parts[2]), let number = Int(parts[3]) else { return nil }
-            return manualSnapshot(owner: parts[0], repo: parts[1], issue: number, pull: parts[2] == "pull" ? number : nil, url: trimmed)
-        }
-        if host.contains("algora") {
-            guard parts.count >= 4, parts[2] == "issues", let number = Int(parts[3]) else { return nil }
-            return manualSnapshot(owner: parts[0], repo: parts[1], issue: number, pull: nil, url: trimmed)
-        }
-        return nil
+        nil
     }
 
     private func buildTrackedBounty(from item: GitHubSearchItem, username: String, token: String, allowDirectBotClaim: Bool) async throws -> BuiltBounty {
@@ -119,29 +114,28 @@ struct BountyTrackerService {
         async let issueCommentsTask = github.issueComments(owner: slug.owner, repo: slug.repo, number: issueNumber, token: token)
         let issue = (try? await issueTask) ?? fallbackIssue(from: item, owner: slug.owner, repo: slug.repo, number: issueNumber)
         let issueComments = (try? await issueCommentsTask) ?? []
-        let allComments = prIssueComments + issueComments
         let labels = Array(Set((item.labels + (pr.labels ?? []) + issue.labels).map(\.name))).sorted()
+        let verification = BountyParsing.classifyAlgoraOnly(
+            issue: issue,
+            comments: issueComments,
+            repo: "\(slug.owner)/\(slug.repo)",
+            claimPrsCount: claimIssues.count
+        )
+        guard verification.verified else { throw BountyTrackerServiceError.noBountyEvidence }
+
+        let allComments = prIssueComments + issueComments
         let bodyCorpus = [issue.body, pr.body, item.body].compactMap { $0 }.joined(separator: "\n")
         let commentCorpus = allComments.map(\.body)
         let textCorpus = ([bodyCorpus] + commentCorpus).joined(separator: "\n")
-        let amount = BountyParsing.bountyAmount(in: labels.joined(separator: " ") + "\n" + textCorpus) ?? 0
-        let claimStatus = BountyParsing.paymentStatus(in: textCorpus) ?? BountyParsing.claimStatus(in: textCorpus) ?? .unknown
+        let algoraTextCorpus = verification.evidence.joined(separator: "\n")
+        let amount = verification.amountUsd ?? 0
+        let claimStatus = BountyParsing.paymentStatus(in: algoraTextCorpus) ?? BountyParsing.claimStatus(in: algoraTextCorpus) ?? .unknown
         let prState = resolvePullRequestState(pr)
-        let issueState = issue.state.lowercased() == "closed" ? IssueState.closed : IssueState.open
+        let issueState = verification.issueState
         let latestMaintainer = BountyParsing.latestMaintainerComment(from: allComments, excluding: username)
-        let latestBot = BountyParsing.latestBotComment(from: allComments)
-        let evidence = BountyParsing.algoraEvidence(labels: labels, body: bodyCorpus, comments: commentCorpus)
-        let rewardLinks = BountyParsing.rewardLinks(in: textCorpus)
-        let evidenceText = ([issue.title, pr.title, prBody, latestBot, latestMaintainer] + labels + evidence).joined(separator: "\n")
-        guard evidence.isEmpty == false
-            || amount > 0
-            || claimStatus != .unknown
-            || rewardLinks.isEmpty == false
-            || BountyParsing.containsClaimMarker(evidenceText)
-            || (allowDirectBotClaim && latestBot.isEmpty == false)
-        else {
-            throw BountyTrackerServiceError.noBountyEvidence
-        }
+        let latestBot = BountyParsing.latestAlgoraBotComment(from: issueComments)
+        let evidence = ["Verified Algora bounty", "Algora bot comment found", "Algora claim flow found"] + verification.evidence
+        let rewardLinks = BountyParsing.rewardLinks(in: algoraTextCorpus)
 
         async let repositoryTask = github.repository(owner: slug.owner, repo: slug.repo, token: token)
         async let checksTask = github.checkRuns(owner: slug.owner, repo: slug.repo, ref: pr.head.sha, token: token)
@@ -167,7 +161,7 @@ struct BountyTrackerService {
         let priorRejected = BountyParsing.priorRejectedSignal(in: textCorpus, username: username)
         let hasVerification = BountyParsing.hasClearVerification(in: prBody)
         let hasTests = BountyParsing.hasTests(in: prBody)
-        let rewarded = claimStatus == .paymentSucceeded || textCorpus.lowercased().contains("total paid") || textCorpus.lowercased().contains("rewarded")
+        let rewarded = verification.alreadyRewarded || claimStatus == .paymentSucceeded
         let riskInput = RiskInput(
             pullRequestState: prState,
             issueState: issueState,
@@ -269,7 +263,7 @@ struct BountyTrackerService {
             labels: issue.labels.map(\.name),
             latestComment: BountyParsing.latestComment(from: issueComments),
             latestBotComment: latestBot,
-            hasAlgoraEvidence: BountyParsing.hasAlgoraEvidence(labels: labels, body: bodyCorpus, comments: commentCorpus),
+            hasAlgoraEvidence: verification.verified,
             bountyAmount: amount,
             requiresVideo: requiresVideo,
             hasRewardedSignal: rewarded,
@@ -294,12 +288,16 @@ struct BountyTrackerService {
         return BuiltBounty(bounty: bounty, pullRequest: pull, issue: issueSnapshot, ruleSet: ruleSet, competitors: competitors, riskSnapshot: riskSnapshot)
     }
 
-    private func mergeAlgoraData(into result: inout TrackerRefreshResult, algoraToken: String?, watchedOrgs: [String]) async {
+    private func mergeAlgoraData(into result: inout TrackerRefreshResult, githubToken: String?, algoraToken: String?, watchedOrgs: [String]) async {
         let orgs = watchedOrgs.filter { $0.isEmpty == false }
         for org in orgs {
             do {
                 let bounties = try await algoraPublic.bounties(org: org, limit: 100)
-                result.bounties.append(contentsOf: bounties.compactMap { algoraSnapshot(from: $0, source: .algoraPublic) })
+                for dto in bounties {
+                    if let snapshot = await algoraSnapshot(from: dto, source: .algoraPublic, githubToken: githubToken) {
+                        result.bounties.append(snapshot)
+                    }
+                }
                 let claims = try await algoraPublic.claims(org: org, limit: 100)
                 result.claims.append(contentsOf: claims.compactMap { claimSnapshot(from: $0, org: org) })
             } catch {
@@ -311,7 +309,11 @@ struct BountyTrackerService {
         guard authenticated.isConfigured else { return }
         do {
             let authedBounties = try await authenticated.bounties(limit: 100)
-            result.bounties.append(contentsOf: authedBounties.compactMap { algoraSnapshot(from: $0, source: .algoraAuthenticated) })
+            for dto in authedBounties {
+                if let snapshot = await algoraSnapshot(from: dto, source: .algoraAuthenticated, githubToken: githubToken) {
+                    result.bounties.append(snapshot)
+                }
+            }
             let authedClaims = try await authenticated.claims(limit: 100)
             result.claims.append(contentsOf: authedClaims.compactMap { claimSnapshot(from: $0, org: "authenticated") })
         } catch {
@@ -319,26 +321,52 @@ struct BountyTrackerService {
         }
     }
 
-    private func algoraSnapshot(from dto: AlgoraBountyDTO, source: BountySource) -> TrackedBountySnapshot? {
+    private func algoraSnapshot(from dto: AlgoraBountyDTO, source: BountySource, githubToken: String?) async -> TrackedBountySnapshot? {
         guard let task = dto.task, let owner = task.repoOwner, let repo = task.repoName, let number = task.number else { return nil }
-        let text = [task.title, task.body, dto.rewardFormatted].compactMap { $0 }.joined(separator: "\n")
-        let amount = dto.reward?.amount ?? BountyParsing.bountyAmount(in: text) ?? 0
+        let repoSlug = "\(owner)/\(repo)"
+        let active = dto.status?.lowercased() == "active"
+        let issue = (try? await github.issue(owner: owner, repo: repo, number: number, token: githubToken)) ?? GitHubIssueResponse(
+            htmlUrl: task.url ?? "https://github.com/\(owner)/\(repo)/issues/\(number)",
+            number: number,
+            state: active ? "open" : "closed",
+            title: task.title ?? "Algora bounty",
+            body: task.body,
+            labels: [],
+            user: GitHubUserSummary(login: "unknown"),
+            assignees: [],
+            updatedAt: dto.updatedAt ?? dto.createdAt ?? Date(),
+            closedAt: nil
+        )
+        let issueComments = (try? await github.issueComments(owner: owner, repo: repo, number: number, token: githubToken)) ?? []
+        let verification = BountyParsing.classifyAlgoraOnly(
+            issue: issue,
+            comments: issueComments,
+            repo: repoSlug,
+            claimPrsCount: dto.claims?.count ?? 0
+        )
+        guard verification.verified else { return nil }
+
+        let algoraText = verification.evidence.joined(separator: "\n")
+        let amount = verification.amountUsd ?? dto.reward?.amount ?? 0
         let claimStatuses = dto.claims?.compactMap { $0.status.map(statusFromAlgora) } ?? []
         let claim = claimStatuses.bestClaimStatus()
-        let active = dto.status?.lowercased() == "active"
+        let resolvedClaim = claim == .unknown ? (BountyParsing.paymentStatus(in: algoraText) ?? BountyParsing.claimStatus(in: algoraText) ?? .unknown) : claim
+        let updated = maxDate(dto.updatedAt ?? dto.createdAt ?? Date(), issue.updatedAt)
+        let issueState = verification.issueState
+        let rewarded = verification.alreadyRewarded || resolvedClaim == .paymentSucceeded
         let risk = riskScoring.score(RiskInput(
             pullRequestState: .unknown,
-            issueState: active ? .open : .closed,
+            issueState: issueState,
             checkState: .unknown,
-            claimStatus: claim,
+            claimStatus: resolvedClaim,
             mergeableState: "unknown",
             hasMaintainerComment: false,
             competitionCount: dto.claims?.count ?? 0,
             competitorMerged: false,
-            issueAlreadyRewarded: claim == .paymentSucceeded,
-            assignmentRequired: BountyParsing.assignmentRequired(in: text),
+            issueAlreadyRewarded: rewarded,
+            assignmentRequired: BountyParsing.assignmentRequired(in: algoraText),
             userAppearsAssigned: false,
-            demoVideoRequired: BountyParsing.requiresVideo(in: text),
+            demoVideoRequired: BountyParsing.requiresVideo(in: algoraText),
             demoProofPresent: false,
             repoArchived: false,
             priorRejectedSignal: false,
@@ -347,7 +375,6 @@ struct BountyTrackerService {
             contributingRulesFound: false,
             codeOfConductFound: false
         ))
-        let updated = dto.updatedAt ?? dto.createdAt ?? Date()
         return TrackedBountySnapshot(
             stableID: "algora:\(owner)/\(repo)#\(number)",
             source: source,
@@ -355,31 +382,31 @@ struct BountyTrackerService {
             repoName: repo,
             issueNumber: number,
             linkedPullRequestNumber: nil,
-            title: task.title ?? "Algora bounty",
-            issueBodySummary: (task.body ?? "").trimmedSummary(limit: 420),
+            title: issue.title,
+            issueBodySummary: (issue.body ?? task.body ?? "").trimmedSummary(limit: 420),
             pullRequestSummary: "",
             amount: amount,
-            labels: ["Algora", "Bounty"],
-            algoraEvidence: ["Algora bounty API record"],
-            rewardLinks: [task.url].compactMap { $0 },
-            workflowStatus: active ? .watching : .lost,
-            issueState: active ? .open : .closed,
-            claimStatus: claim,
+            labels: issue.labels.map(\.name),
+            algoraEvidence: ["Verified Algora bounty", "Algora bot comment found", "Algora claim flow found"] + verification.evidence,
+            rewardLinks: [task.url].compactMap { $0 } + BountyParsing.rewardLinks(in: algoraText),
+            workflowStatus: issueState == .open ? .watching : .lost,
+            issueState: issueState,
+            claimStatus: resolvedClaim,
             checkState: .unknown,
             riskLevel: risk.level,
             payoutChance: risk.score,
             riskFactors: risk.factors,
             nextAction: risk.nextAction,
             latestMaintainerComment: "",
-            latestBotComment: "",
+            latestBotComment: BountyParsing.latestAlgoraBotComment(from: issueComments),
             competitionCount: dto.claims?.count ?? 0,
-            hasRewardedSignal: claim == .paymentSucceeded,
-            requiresVideo: BountyParsing.requiresVideo(in: text),
+            hasRewardedSignal: rewarded,
+            requiresVideo: BountyParsing.requiresVideo(in: algoraText),
             hasDemoProof: false,
             repoArchived: false,
-            assignedOnly: BountyParsing.assignmentRequired(in: text),
+            assignedOnly: BountyParsing.assignmentRequired(in: algoraText),
             userAppearsAssigned: false,
-            maintainerAssignmentRequired: BountyParsing.maintainerAssignmentRequired(in: text),
+            maintainerAssignmentRequired: BountyParsing.maintainerAssignmentRequired(in: algoraText),
             priorRejectedSignal: false,
             hasClearVerification: false,
             hasTests: false,
@@ -389,26 +416,34 @@ struct BountyTrackerService {
         )
     }
 
-    private func openIssueSnapshot(from item: GitHubSearchItem) -> TrackedBountySnapshot? {
+    private func openIssueSnapshot(from item: GitHubSearchItem, token: String?) async -> TrackedBountySnapshot? {
         guard let slug = GitHubClient.repositorySlug(from: item.repositoryUrl) else { return nil }
-        let labels = item.labels.map(\.name)
-        let body = item.body ?? ""
-        let evidence = BountyParsing.algoraEvidence(labels: labels, body: body, comments: [])
-        let amount = BountyParsing.bountyAmount(in: labels.joined(separator: " ") + "\n" + body) ?? 0
-        let claim = BountyParsing.claimStatus(in: body) ?? .unknown
+        async let issueTask = github.issue(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
+        async let issueCommentsTask = github.issueComments(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
+        let issue = (try? await issueTask) ?? fallbackIssue(from: item, owner: slug.owner, repo: slug.repo, number: item.number)
+        let issueComments = (try? await issueCommentsTask) ?? []
+        let repoSlug = "\(slug.owner)/\(slug.repo)"
+        let verification = BountyParsing.classifyAlgoraOnly(issue: issue, comments: issueComments, repo: repoSlug)
+        guard verification.verified else { return nil }
+
+        let labels = Array(Set((item.labels + issue.labels).map(\.name))).sorted()
+        let algoraText = verification.evidence.joined(separator: "\n")
+        let amount = verification.amountUsd ?? 0
+        let claim = BountyParsing.paymentStatus(in: algoraText) ?? BountyParsing.claimStatus(in: algoraText) ?? .unknown
+        let rewarded = verification.alreadyRewarded || claim == .paymentSucceeded
         let risk = riskScoring.score(RiskInput(
             pullRequestState: .unknown,
-            issueState: item.state.lowercased() == "closed" ? .closed : .open,
+            issueState: verification.issueState,
             checkState: .unknown,
             claimStatus: claim,
             mergeableState: "unknown",
             hasMaintainerComment: false,
-            competitionCount: item.comments ?? 0,
+            competitionCount: 0,
             competitorMerged: false,
-            issueAlreadyRewarded: body.lowercased().contains("total paid") || body.lowercased().contains("rewarded"),
-            assignmentRequired: BountyParsing.assignmentRequired(in: body),
+            issueAlreadyRewarded: rewarded,
+            assignmentRequired: BountyParsing.assignmentRequired(in: algoraText),
             userAppearsAssigned: false,
-            demoVideoRequired: BountyParsing.requiresVideo(in: body),
+            demoVideoRequired: BountyParsing.requiresVideo(in: algoraText),
             demoProofPresent: false,
             repoArchived: false,
             priorRejectedSignal: false,
@@ -424,15 +459,15 @@ struct BountyTrackerService {
             repoName: slug.repo,
             issueNumber: item.number,
             linkedPullRequestNumber: nil,
-            title: item.title,
-            issueBodySummary: body.trimmedSummary(limit: 420),
+            title: issue.title,
+            issueBodySummary: (issue.body ?? item.body ?? "").trimmedSummary(limit: 420),
             pullRequestSummary: "",
             amount: amount,
             labels: labels,
-            algoraEvidence: evidence,
-            rewardLinks: BountyParsing.rewardLinks(in: body),
-            workflowStatus: .watching,
-            issueState: item.state.lowercased() == "closed" ? .closed : .open,
+            algoraEvidence: ["Verified Algora bounty", "Algora bot comment found", "Algora claim flow found"] + verification.evidence,
+            rewardLinks: BountyParsing.rewardLinks(in: algoraText),
+            workflowStatus: verification.issueState == .open ? .watching : .lost,
+            issueState: verification.issueState,
             claimStatus: claim,
             checkState: .unknown,
             riskLevel: risk.level,
@@ -440,20 +475,20 @@ struct BountyTrackerService {
             riskFactors: risk.factors,
             nextAction: risk.nextAction,
             latestMaintainerComment: "",
-            latestBotComment: "",
-            competitionCount: item.comments ?? 0,
-            hasRewardedSignal: body.lowercased().contains("total paid") || body.lowercased().contains("rewarded"),
-            requiresVideo: BountyParsing.requiresVideo(in: body),
+            latestBotComment: BountyParsing.latestAlgoraBotComment(from: issueComments),
+            competitionCount: 0,
+            hasRewardedSignal: rewarded,
+            requiresVideo: BountyParsing.requiresVideo(in: algoraText),
             hasDemoProof: false,
             repoArchived: false,
-            assignedOnly: BountyParsing.assignmentRequired(in: body),
+            assignedOnly: BountyParsing.assignmentRequired(in: algoraText),
             userAppearsAssigned: false,
-            maintainerAssignmentRequired: BountyParsing.maintainerAssignmentRequired(in: body),
+            maintainerAssignmentRequired: BountyParsing.maintainerAssignmentRequired(in: algoraText),
             priorRejectedSignal: false,
             hasClearVerification: false,
             hasTests: false,
             createdAt: item.createdAt,
-            updatedAt: item.updatedAt,
+            updatedAt: maxDate(issue.updatedAt, item.updatedAt),
             lastRefreshedAt: Date()
         )
     }
@@ -668,7 +703,7 @@ enum BountyTrackerServiceError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .noBountyEvidence: return "No Algora-backed bounty evidence was found on this pull request."
+        case .noBountyEvidence: return "Not Algora: no algora-pbc[bot] amount and claim flow was found on the linked issue."
         }
     }
 }
