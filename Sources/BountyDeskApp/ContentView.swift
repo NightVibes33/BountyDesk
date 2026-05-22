@@ -621,7 +621,9 @@ private struct BountyDetailView: View {
     }
 
     var body: some View {
-        List {
+        ZStack {
+            BountyBackdrop()
+            List {
             Section("Summary") {
                 HStack { Text("Payout"); Spacer(); Text(bounty.payoutText).fontWeight(.semibold) }
                 LabeledContent("Risk", value: "\(bounty.riskLevel.rawValue) · \(bounty.payoutChance)%")
@@ -700,6 +702,8 @@ private struct BountyDetailView: View {
                     CompetitionView(bounty: bounty)
                 }
             }
+            }
+            .scrollContentBackground(.hidden)
         }
         .navigationTitle(bounty.issueSlug)
     }
@@ -716,8 +720,10 @@ private struct CompetitionView: View {
     }
 
     var body: some View {
-        List {
-            Section("Ethical Improvements") {
+        ZStack {
+            BountyBackdrop()
+            List {
+                Section("Ethical Improvements") {
                 EthicalSuggestionList(bounty: bounty)
             }
             Section("Competitor PRs") {
@@ -746,7 +752,9 @@ private struct CompetitionView: View {
                         }
                     }
                 }
+                }
             }
+            .scrollContentBackground(.hidden)
         }
         .navigationTitle("Competition")
     }
@@ -761,7 +769,9 @@ private struct DiscoverView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            ZStack {
+                BountyBackdrop()
+                List {
                 Section("Filters") {
                     TextField("Org", text: $app.discoverFilters.org)
                         .textInputAutocapitalization(.never)
@@ -815,9 +825,11 @@ private struct DiscoverView: View {
                         }
                     }
                 }
+                }
+                .scrollContentBackground(.hidden)
+                .refreshable { await app.discover() }
             }
             .navigationTitle("Discover")
-            .refreshable { await app.discover() }
             .onAppear {
                 guard didApplyDefaultMinimumPayout == false else { return }
                 didApplyDefaultMinimumPayout = true
@@ -835,7 +847,9 @@ private struct AlertsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            ZStack {
+                BountyBackdrop()
+                List {
                 if alerts.isEmpty {
                     ContentUnavailableView("No Alerts", systemImage: "bell", description: Text("Alerts appear after refresh detects maintainer, check, PR, issue, claim, or payment changes."))
                 } else {
@@ -861,6 +875,8 @@ private struct AlertsView: View {
                         }
                     }
                 }
+                }
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("Alerts")
         }
@@ -884,7 +900,9 @@ private struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            ZStack {
+                BountyBackdrop()
+                Form {
                 Section("GitHub Auth Status") {
                     if let account = accounts.first {
                         LabeledContent("User", value: account.githubLogin)
@@ -986,6 +1004,8 @@ private struct SettingsView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                }
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("Settings")
         }
@@ -1008,7 +1028,9 @@ private struct AddBountyView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            ZStack {
+                BountyBackdrop()
+                Form {
                 Section("GitHub or Algora URL") {
                     TextField("https://github.com/org/repo/issues/123", text: $urlText)
                         .keyboardType(.URL)
@@ -1023,6 +1045,8 @@ private struct AddBountyView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                }
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("Import Bounty")
             .toolbar {
