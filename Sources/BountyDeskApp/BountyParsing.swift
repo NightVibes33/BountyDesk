@@ -24,7 +24,7 @@ enum BountyParsing {
 
     static func bountyAmount(in text: String) -> Int? {
         let patterns = [
-            #"\$\s*([0-9]+(?:\.[0-9]+)?)\s*([kKmM]?)"#,
+            #"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kKmM]?)"#,
             #"\b([0-9][0-9,]*(?:\.[0-9]+)?)\s*(usd|dollars)\b"#,
             #"\b(?:reward|bounty|prize|pool)\D{0,20}([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kKmM]?)"#
         ]
