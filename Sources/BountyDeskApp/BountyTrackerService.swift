@@ -668,7 +668,8 @@ struct DiscoverFilters: Equatable {
         if activeOnly && snapshot.issueState == .closed { return false }
         if noPaidSignal && snapshot.hasRewardedSignal { return false }
         if onlyAlgoraEvidence && snapshot.algoraEvidence.isEmpty { return false }
-        if snapshot.amount > 0 && snapshot.amount < minimumPayout { return false }
+        if recentlyUpdated, let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()), snapshot.updatedAt < cutoff { return false }
+        if minimumPayout > 0 && (snapshot.amount == 0 || snapshot.amount < minimumPayout) { return false }
         if maximumPayout > 0 && snapshot.amount > maximumPayout { return false }
         if lowCompetition && max(snapshot.competitionCount, commentCount) > 5 { return false }
         if finishableToday && snapshot.amount > 750 { return false }

@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct BountyDeskApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("refreshIntervalMinutes") private var refreshIntervalMinutes = 30
     @StateObject private var viewModel = BountyTrackerViewModel()
 
     private let modelContainer: ModelContainer = {
@@ -42,7 +43,7 @@ struct BountyDeskApp: App {
                 Task { await viewModel.resumeGitHubDeviceLoginIfNeeded() }
             }
             if phase == .background {
-                BackgroundRefreshCoordinator.shared.scheduleAppRefresh()
+                BackgroundRefreshCoordinator.shared.scheduleAppRefresh(afterMinutes: refreshIntervalMinutes)
             }
         }
     }

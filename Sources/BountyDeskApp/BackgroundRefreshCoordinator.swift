@@ -10,6 +10,11 @@ final class BackgroundRefreshCoordinator: @unchecked Sendable {
 
     private init() {}
 
+    private var configuredIntervalMinutes: Int {
+        let stored = UserDefaults.standard.integer(forKey: "refreshIntervalMinutes")
+        return stored == 0 ? 30 : stored
+    }
+
     func register() {
         #if canImport(BackgroundTasks)
         guard didRegister == false else { return }
@@ -20,10 +25,10 @@ final class BackgroundRefreshCoordinator: @unchecked Sendable {
         #endif
     }
 
-    func scheduleAppRefresh() {
+    func scheduleAppRefresh(afterMinutes minutes: Int = 30) {
         #if canImport(BackgroundTasks)
         let request = BGAppRefreshTaskRequest(identifier: identifier)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 30 * 60)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: TimeInterval(min(max(minutes, 15), 240) * 60))
         do {
             try BGTaskScheduler.shared.submit(request)
         } catch {
@@ -34,7 +39,7 @@ final class BackgroundRefreshCoordinator: @unchecked Sendable {
 
     #if canImport(BackgroundTasks)
     private func handle(task: BGAppRefreshTask?) {
-        scheduleAppRefresh()
+        scheduleAppRefresh(afterMinutes: configuredIntervalMinutes)
         guard let task else { return }
         task.expirationHandler = {
             task.setTaskCompleted(success: false)

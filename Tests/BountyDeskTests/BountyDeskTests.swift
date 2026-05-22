@@ -31,11 +31,74 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertEqual(BountyParsing.paymentStatus(in: "payment_succeeded"), .paymentSucceeded)
     }
 
-    func testVideoAndVerificationParsing() {
+    func testVideoVerificationAndRewardLinkParsing() {
         XCTAssertTrue(BountyParsing.requiresVideo(in: "A demo video is required."))
         XCTAssertTrue(BountyParsing.hasDemoProof(in: "Demo: https://loom.com/share/abc"))
         XCTAssertTrue(BountyParsing.hasClearVerification(in: "Steps to test: run npm test"))
         XCTAssertTrue(BountyParsing.hasTests(in: "I ran swift test and added coverage."))
+        XCTAssertEqual(BountyParsing.rewardLinks(in: "Reward: https://console.algora.io/org/repo/bounties/42"), ["https://console.algora.io/org/repo/bounties/42"])
+    }
+}
+
+
+final class DiscoverFiltersTests: XCTestCase {
+    func testRecentlyUpdatedFilterRejectsOldBounties() {
+        var filters = DiscoverFilters()
+        filters.onlyAlgoraEvidence = false
+        filters.recentlyUpdated = true
+        let old = Self.snapshot(updatedAt: Date().addingTimeInterval(-60.0 * 24.0 * 60.0 * 60.0))
+        XCTAssertFalse(filters.matches(snapshot: old, commentCount: 0))
+    }
+
+    func testMinimumPayoutRejectsUnknownAmountWhenConfigured() {
+        var filters = DiscoverFilters()
+        filters.onlyAlgoraEvidence = false
+        filters.minimumPayout = 500
+        let unknownAmount = Self.snapshot(amount: 0)
+        XCTAssertFalse(filters.matches(snapshot: unknownAmount, commentCount: 0))
+        XCTAssertTrue(filters.matches(snapshot: Self.snapshot(amount: 750), commentCount: 0))
+    }
+
+    private static func snapshot(amount: Int = 500, updatedAt: Date = Date()) -> TrackedBountySnapshot {
+        TrackedBountySnapshot(
+            stableID: "test:org/repo#1",
+            source: .github,
+            repoOwner: "org",
+            repoName: "repo",
+            issueNumber: 1,
+            linkedPullRequestNumber: nil,
+            title: "Test bounty",
+            issueBodySummary: "",
+            pullRequestSummary: "",
+            amount: amount,
+            labels: [],
+            algoraEvidence: ["Algora reference found"],
+            rewardLinks: [],
+            workflowStatus: .watching,
+            issueState: .open,
+            claimStatus: .unknown,
+            checkState: .unknown,
+            riskLevel: .medium,
+            payoutChance: 50,
+            riskFactors: [],
+            nextAction: "Review",
+            latestMaintainerComment: "",
+            latestBotComment: "",
+            competitionCount: 0,
+            hasRewardedSignal: false,
+            requiresVideo: false,
+            hasDemoProof: false,
+            repoArchived: false,
+            assignedOnly: false,
+            userAppearsAssigned: false,
+            maintainerAssignmentRequired: false,
+            priorRejectedSignal: false,
+            hasClearVerification: false,
+            hasTests: false,
+            createdAt: updatedAt,
+            updatedAt: updatedAt,
+            lastRefreshedAt: nil
+        )
     }
 }
 

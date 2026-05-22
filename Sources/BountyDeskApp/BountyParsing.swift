@@ -214,7 +214,8 @@ enum BountyParsing {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return [] }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         return regex.matches(in: text, options: [], range: range).compactMap { match in
-            guard match.numberOfRanges > 1, let matchRange = Range(match.range(at: 1), in: text) else { return nil }
+            let captureIndex = match.numberOfRanges > 1 ? 1 : 0
+            guard let matchRange = Range(match.range(at: captureIndex), in: text) else { return nil }
             return String(text[matchRange])
         }
     }

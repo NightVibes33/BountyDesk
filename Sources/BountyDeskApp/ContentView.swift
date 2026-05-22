@@ -533,6 +533,8 @@ private struct CompetitionView: View {
 
 private struct DiscoverView: View {
     @EnvironmentObject private var app: BountyTrackerViewModel
+    @AppStorage("defaultMinimumPayout") private var defaultMinimumPayout = 0
+    @State private var didApplyDefaultMinimumPayout = false
     @State private var videoFilter: TernaryFilter = .any
     @State private var assignmentFilter: TernaryFilter = .any
 
@@ -595,6 +597,13 @@ private struct DiscoverView: View {
             }
             .navigationTitle("Discover")
             .refreshable { await app.discover() }
+            .onAppear {
+                guard didApplyDefaultMinimumPayout == false else { return }
+                didApplyDefaultMinimumPayout = true
+                if app.discoverFilters.minimumPayout == 0 {
+                    app.discoverFilters.minimumPayout = defaultMinimumPayout
+                }
+            }
         }
     }
 }
