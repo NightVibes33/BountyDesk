@@ -207,6 +207,22 @@ final class DiscoverFiltersTests: XCTestCase {
     }
 }
 
+final class BountyChecklistItemTests: XCTestCase {
+    func testToggleChecklistItemUpdatesCompletionState() {
+        let item = BountyChecklistItem(bountyStableID: "bounty:org/repo#1", title: "Respond to maintainer")
+        XCTAssertFalse(item.isDone)
+        XCTAssertNil(item.completedAt)
+
+        item.toggleDone()
+        XCTAssertTrue(item.isDone)
+        XCTAssertNotNil(item.completedAt)
+
+        item.toggleDone()
+        XCTAssertFalse(item.isDone)
+        XCTAssertNil(item.completedAt)
+    }
+}
+
 final class RiskScoringTests: XCTestCase {
     func testRiskScoringLowRiskPaymentProcessing() {
         let output = RiskScoringService().score(RiskInput(

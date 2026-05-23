@@ -314,6 +314,64 @@ final class BountyTrackerViewModel: ObservableObject {
         }
     }
 
+    func addChecklistItem(title: String, for bounty: Bounty, existingCount: Int) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return }
+        guard let modelContext else { return }
+        modelContext.insert(BountyChecklistItem(bountyStableID: bounty.stableID, title: trimmed, sortIndex: existingCount))
+        persistManagement(message: "Added checklist item for \(bounty.issueSlug).")
+    }
+
+    func toggleChecklistItem(_ item: BountyChecklistItem) {
+        item.toggleDone()
+        persistManagement(message: item.isDone ? "Completed checklist item." : "Reopened checklist item.")
+    }
+
+    func deleteChecklistItem(_ item: BountyChecklistItem) {
+        guard let modelContext else { return }
+        modelContext.delete(item)
+        persistManagement(message: "Deleted checklist item.")
+    }
+
+    func clearCompletedChecklistItems(for bounty: Bounty) {
+        guard let modelContext else { return }
+        do {
+            let stableID = bounty.stableID
+            let descriptor = FetchDescriptor<BountyChecklistItem>(predicate: #Predicate { $0.bountyStableID == stableID && $0.isDone == true })
+            let items = try modelContext.fetch(descriptor)
+            for item in items { modelContext.delete(item) }
+            try modelContext.save()
+            syncMessage = "Cleared completed checklist items for \(bounty.issueSlug)."
+        } catch {
+            syncMessage = error.localizedDescription
+        }
+    }
+
+    func markAllAlertsRead() {
+        guard let modelContext else { return }
+        do {
+            for alert in try modelContext.fetch(FetchDescriptor<AlertEvent>()) {
+                alert.isRead = true
+            }
+            try modelContext.save()
+            syncMessage = "Marked alerts read."
+        } catch {
+            syncMessage = error.localizedDescription
+        }
+    }
+
+    func deleteReadAlerts() {
+        guard let modelContext else { return }
+        do {
+            let descriptor = FetchDescriptor<AlertEvent>(predicate: #Predicate { $0.isRead == true })
+            for alert in try modelContext.fetch(descriptor) { modelContext.delete(alert) }
+            try modelContext.save()
+            syncMessage = "Deleted read alerts."
+        } catch {
+            syncMessage = error.localizedDescription
+        }
+    }
+
     private func persistManagement(message: String) {
         do {
             try modelContext?.save()
@@ -332,6 +390,7 @@ final class BountyTrackerViewModel: ObservableObject {
             try deleteAll(RepoRuleSet.self)
             try deleteAll(CompetitorPR.self)
             try deleteAll(AlertEvent.self)
+            try deleteAll(BountyChecklistItem.self)
             try deleteAll(RiskScoreSnapshot.self)
             try deleteAll(Claim.self)
             try modelContext.save()
@@ -601,6 +660,7 @@ final class BountyTrackerViewModel: ObservableObject {
         try deleteWhere(Claim.self, bountyStableID: bountyStableID)
         try deleteWhere(RiskScoreSnapshot.self, bountyStableID: bountyStableID)
         try deleteWhere(AlertEvent.self, bountyStableID: bountyStableID)
+        try deleteWhere(BountyChecklistItem.self, bountyStableID: bountyStableID)
     }
 
     private func deleteWhere(_ type: PullRequest.Type, bountyStableID: String) throws {
@@ -642,6 +702,12 @@ final class BountyTrackerViewModel: ObservableObject {
     private func deleteWhere(_ type: AlertEvent.Type, bountyStableID: String) throws {
         guard let modelContext else { return }
         let descriptor = FetchDescriptor<AlertEvent>(predicate: #Predicate { $0.bountyStableID == bountyStableID })
+        for item in try modelContext.fetch(descriptor) { modelContext.delete(item) }
+    }
+
+    private func deleteWhere(_ type: BountyChecklistItem.Type, bountyStableID: String) throws {
+        guard let modelContext else { return }
+        let descriptor = FetchDescriptor<BountyChecklistItem>(predicate: #Predicate { $0.bountyStableID == bountyStableID })
         for item in try modelContext.fetch(descriptor) { modelContext.delete(item) }
     }
 

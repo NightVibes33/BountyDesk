@@ -67,6 +67,7 @@ enum PreviewFixtures {
             RepoRuleSet.self,
             CompetitorPR.self,
             AlertEvent.self,
+            BountyChecklistItem.self,
             RiskScoreSnapshot.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -77,6 +78,8 @@ enum PreviewFixtures {
         let bounty = Bounty(snapshot: sampleSnapshot)
         context.insert(bounty)
         context.insert(AlertEvent(snapshot: AlertSnapshot(stableID: "mock-alert", bountyStableID: bounty.stableID, kind: .maintainerComment, title: "Maintainer activity", detail: bounty.latestMaintainerComment, isRead: false, createdAt: Date())))
+        context.insert(BountyChecklistItem(bountyStableID: bounty.stableID, title: "Respond to maintainer test request", sortIndex: 0))
+        context.insert(BountyChecklistItem(bountyStableID: bounty.stableID, title: "Watch claim payout state", isDone: true, completedAt: Date().addingTimeInterval(-3_600), sortIndex: 1))
         try? context.save()
         return container
     }

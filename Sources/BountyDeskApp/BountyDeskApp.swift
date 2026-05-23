@@ -18,6 +18,7 @@ struct BountyDeskApp: App {
             RepoRuleSet.self,
             CompetitorPR.self,
             AlertEvent.self,
+            BountyChecklistItem.self,
             RiskScoreSnapshot.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)

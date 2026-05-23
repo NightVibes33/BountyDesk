@@ -794,6 +794,40 @@ final class AlertEvent {
 }
 
 @Model
+final class BountyChecklistItem {
+    @Attribute(.unique) var stableID: String
+    var bountyStableID: String
+    var title: String
+    var isDone: Bool
+    var createdAt: Date
+    var completedAt: Date?
+    var sortIndex: Int
+
+    init(
+        stableID: String = UUID().uuidString,
+        bountyStableID: String,
+        title: String,
+        isDone: Bool = false,
+        createdAt: Date = Date(),
+        completedAt: Date? = nil,
+        sortIndex: Int = 0
+    ) {
+        self.stableID = stableID
+        self.bountyStableID = bountyStableID
+        self.title = title
+        self.isDone = isDone
+        self.createdAt = createdAt
+        self.completedAt = completedAt
+        self.sortIndex = sortIndex
+    }
+
+    func toggleDone() {
+        isDone.toggle()
+        completedAt = isDone ? Date() : nil
+    }
+}
+
+@Model
 final class RiskScoreSnapshot {
     @Attribute(.unique) var stableID: String
     var bountyStableID: String
