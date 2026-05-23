@@ -393,6 +393,64 @@ final class GitHubClientTests: XCTestCase {
         XCTAssertTrue(queries.contains { $0.contains("\"@algora-pbc\"") })
     }
 
+    func testBountyWorkPullRequestSearchFindsClaimAndAttemptPRs() async throws {
+        var queries: [String] = []
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/search/issues")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+            queries.append(query)
+            let items: String
+            if query.contains("\"/attempt #123\"") {
+                items = """
+                [{
+                  "url": "https://api.github.com/repos/org/repo/issues/8",
+                  "repository_url": "https://api.github.com/repos/org/repo",
+                  "html_url": "https://github.com/org/repo/pull/8",
+                  "number": 8,
+                  "title": "Attempt bounty",
+                  "body": "/attempt #123",
+                  "state": "open",
+                  "labels": [],
+                  "user": {"login":"other","avatar_url":null,"html_url":"https://github.com/other","type":"User"},
+                  "comments": 0,
+                  "updated_at": "2026-05-22T06:00:00Z",
+                  "created_at": "2026-05-22T05:00:00Z",
+                  "pull_request": {"url":"https://api.github.com/repos/org/repo/pulls/8","html_url":"https://github.com/org/repo/pull/8","merged_at":null}
+                }]
+                """
+            } else if query.contains("#123") {
+                items = """
+                [{
+                  "url": "https://api.github.com/repos/org/repo/issues/7",
+                  "repository_url": "https://api.github.com/repos/org/repo",
+                  "html_url": "https://github.com/org/repo/pull/7",
+                  "number": 7,
+                  "title": "Claim bounty",
+                  "body": "/claim #123",
+                  "state": "open",
+                  "labels": [],
+                  "user": {"login":"other","avatar_url":null,"html_url":"https://github.com/other","type":"User"},
+                  "comments": 0,
+                  "updated_at": "2026-05-22T05:00:00Z",
+                  "created_at": "2026-05-22T04:00:00Z",
+                  "pull_request": {"url":"https://api.github.com/repos/org/repo/pulls/7","html_url":"https://github.com/org/repo/pull/7","merged_at":null}
+                }]
+                """
+            } else {
+                items = "[]"
+            }
+            let json = """
+            {"total_count":1,"incomplete_results":false,"items":\(items)}
+            """.data(using: .utf8)!
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+        }
+
+        let items = try await GitHubClient(session: Self.mockSession()).searchBountyWorkPullRequests(owner: "org", repo: "repo", issueNumber: 123, token: nil)
+        XCTAssertEqual(items.map(\.number), [8, 7])
+        XCTAssertTrue(queries.contains { $0.contains("/claim #123") })
+        XCTAssertTrue(queries.contains { $0.contains("/attempt #123") })
+    }
+
     func testRefreshUsesClaimIssueNumberBeforeIncidentalReferences() async {
         MockURLProtocol.handler = { request in
             let path = request.url!.path
@@ -773,6 +831,10 @@ final class AlgoraFallbackTests: XCTestCase {
         MockURLProtocol.handler = { request in
             switch request.url?.path {
             case "/search/issues":
+                let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+                if query.contains("is:pr") {
+                    return Self.searchPullRequestResponse(number: 44, body: "/claim #123")
+                }
                 return Self.searchIssueResponse(body: "Issue body is not trusted by itself")
             case "/repos/org/repo/issues/123":
                 return Self.issueResponse(body: "Issue body is not trusted by itself")
@@ -806,6 +868,7 @@ final class AlgoraFallbackTests: XCTestCase {
         let result = await service.discoverBounties(filters: DiscoverFilters(), githubToken: nil)
         XCTAssertEqual(result.bounties.count, 1)
         XCTAssertEqual(result.bounties.first?.amount, 50)
+        XCTAssertEqual(result.bounties.first?.competitionCount, 1)
         XCTAssertTrue(result.bounties.first?.algoraEvidence.first == "Verified Algora bounty")
     }
 
@@ -850,6 +913,33 @@ final class AlgoraFallbackTests: XCTestCase {
               "comments": 1,
               "updated_at": "2026-05-22T04:00:00Z",
               "created_at": "2026-05-22T03:00:00Z"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        return (HTTPURLResponse(url: URL(string: "https://api.github.com/search/issues")!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+    }
+
+    private static func searchPullRequestResponse(number: Int, body: String) -> (HTTPURLResponse, Data) {
+        let json = """
+        {
+          "total_count": 1,
+          "incomplete_results": false,
+          "items": [
+            {
+              "url": "https://api.github.com/repos/org/repo/issues/\(number)",
+              "repository_url": "https://api.github.com/repos/org/repo",
+              "html_url": "https://github.com/org/repo/pull/\(number)",
+              "number": \(number),
+              "title": "Claim bounty",
+              "body": "\(body)",
+              "state": "open",
+              "labels": [],
+              "user": {"login":"other","type":"User"},
+              "comments": 0,
+              "updated_at": "2026-05-22T05:00:00Z",
+              "created_at": "2026-05-22T04:00:00Z",
+              "pull_request": {"url":"https://api.github.com/repos/org/repo/pulls/\(number)","html_url":"https://github.com/org/repo/pull/\(number)","merged_at":null}
             }
           ]
         }

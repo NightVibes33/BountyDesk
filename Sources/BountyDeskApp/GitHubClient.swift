@@ -28,7 +28,7 @@ struct GitHubClient {
         return try await searchPullRequests(queries: queries, token: token, perPage: 100)
     }
 
-    private func searchPullRequests(queries: [String], token: String, perPage: Int) async throws -> [GitHubSearchItem] {
+    private func searchPullRequests(queries: [String], token: String?, perPage: Int) async throws -> [GitHubSearchItem] {
         var seen = Set<String>()
         var items: [GitHubSearchItem] = []
         var firstError: Error?
@@ -73,9 +73,19 @@ struct GitHubClient {
         return items.sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    func searchBountyWorkPullRequests(owner: String, repo: String, issueNumber: Int, token: String?, perPage: Int = 50) async throws -> [GitHubSearchItem] {
+        let repoQualifier = "repo:\(owner)/\(repo) is:pr"
+        let queries = [
+            "\(repoQualifier) #\(issueNumber)",
+            "\(repoQualifier) \"/claim #\(issueNumber)\" in:body,comments",
+            "\(repoQualifier) \"/attempt #\(issueNumber)\" in:body,comments",
+            "\(repoQualifier) \"bounty claim\" #\(issueNumber)"
+        ]
+        return try await searchPullRequests(queries: queries, token: token, perPage: perPage)
+    }
+
     func searchCompetitorPullRequests(owner: String, repo: String, issueNumber: Int, token: String?) async throws -> [GitHubSearchItem] {
-        let query = "repo:\(owner)/\(repo) type:pr #\(issueNumber)"
-        return try await searchIssues(query: query, token: token, perPage: 50).items.filter { $0.pullRequest != nil }
+        try await searchBountyWorkPullRequests(owner: owner, repo: repo, issueNumber: issueNumber, token: token)
     }
 
     func pullRequest(owner: String, repo: String, number: Int, token: String?) async throws -> GitHubPullRequestResponse {

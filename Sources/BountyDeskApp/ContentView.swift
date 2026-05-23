@@ -1767,6 +1767,10 @@ private struct AddBountyView: View {
     }
 }
 
+private func workPullRequestText(_ count: Int) -> String {
+    count == 1 ? "1 work PR" : "\(count) work PRs"
+}
+
 private struct BountyRow: View {
     let bounty: Bounty
 
@@ -1800,10 +1804,9 @@ private struct BountyRow: View {
                 VStack(alignment: .leading, spacing: 6) { managementChips }
             }
 
-            HStack(spacing: 8) {
-                StatusChip(text: bounty.workflowStatus.rawValue, systemImage: bounty.workflowStatus.systemImage, tint: bounty.workflowStatus.tint)
-                StatusChip(text: bounty.checkState.rawValue, systemImage: bounty.checkState.systemImage, tint: bounty.checkState.tint)
-                RiskChip(level: bounty.riskLevel)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { statusChips }
+                VStack(alignment: .leading, spacing: 6) { statusChips }
             }
             BountyProgressRail(level: bounty.riskLevel, chance: bounty.payoutChance)
             Text(bounty.nextAction)
@@ -1840,6 +1843,16 @@ private struct BountyRow: View {
             )
         }
     }
+
+    @ViewBuilder
+    private var statusChips: some View {
+        StatusChip(text: bounty.workflowStatus.rawValue, systemImage: bounty.workflowStatus.systemImage, tint: bounty.workflowStatus.tint)
+        StatusChip(text: bounty.checkState.rawValue, systemImage: bounty.checkState.systemImage, tint: bounty.checkState.tint)
+        RiskChip(level: bounty.riskLevel)
+        if bounty.competitionCount > 0 {
+            StatusChip(text: workPullRequestText(bounty.competitionCount), systemImage: "person.3", tint: .orange)
+        }
+    }
 }
 
 private struct BountyCompactRow: View {
@@ -1856,6 +1869,9 @@ private struct BountyCompactRow: View {
                     HStack(spacing: 6) {
                         StageChip(stage: bounty.managementStage)
                         PriorityChip(priority: bounty.userPriority)
+                        if bounty.competitionCount > 0 {
+                            StatusChip(text: workPullRequestText(bounty.competitionCount), systemImage: "person.3", tint: .orange)
+                        }
                     }
                 }
                 Spacer(minLength: 8)
@@ -1895,7 +1911,7 @@ private struct BountySnapshotRow: View {
             }
             HStack {
                 RiskChip(level: snapshot.riskLevel)
-                StatusChip(text: "\(snapshot.competitionCount) signals", systemImage: "person.3", tint: .secondary)
+                StatusChip(text: workPullRequestText(snapshot.competitionCount), systemImage: "person.3", tint: snapshot.competitionCount > 0 ? .orange : .secondary)
             }
             Text(snapshot.nextAction).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
         }

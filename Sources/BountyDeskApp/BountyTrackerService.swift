@@ -156,6 +156,7 @@ struct BountyTrackerService {
         let statuses = try? await statusTask
         let checkState = resolveCheckState(checkRuns: checkRuns, statuses: statuses)
         let competitors = await competitorSnapshots(owner: slug.owner, repo: slug.repo, issueNumber: issueNumber, username: username, ownPR: pr.number, token: token)
+        let activeCompetitorCount = competitors.filter { $0.state == .open || $0.state == .draft }.count
         let competitorMerged = competitors.contains { $0.state == .merged }
         let codeOfConduct = await codeOfConductTask
         let contributing = await contributingTask
@@ -177,7 +178,7 @@ struct BountyTrackerService {
             claimStatus: claimStatus,
             mergeableState: pr.mergeableState ?? (pr.mergeable == false ? "blocked" : "unknown"),
             hasMaintainerComment: latestMaintainer.isEmpty == false,
-            competitionCount: competitors.count,
+            competitionCount: activeCompetitorCount,
             competitorMerged: competitorMerged,
             issueAlreadyRewarded: rewarded,
             assignmentRequired: assignmentRequired || maintainerAssignmentRequired,
@@ -218,7 +219,7 @@ struct BountyTrackerService {
             nextAction: risk.nextAction,
             latestMaintainerComment: latestMaintainer,
             latestBotComment: latestBot,
-            competitionCount: competitors.count,
+            competitionCount: activeCompetitorCount,
             hasRewardedSignal: rewarded,
             requiresVideo: requiresVideo,
             hasDemoProof: hasDemoProof,
@@ -362,6 +363,7 @@ struct BountyTrackerService {
         let updated = maxDate(dto.updatedAt ?? dto.createdAt ?? Date(), issue.updatedAt)
         let issueState = verification.issueState
         let rewarded = verification.alreadyRewarded || resolvedClaim == .paymentSucceeded
+        let competitionCount = await bountyWorkPullRequestCount(owner: owner, repo: repo, issueNumber: number, token: githubToken)
         let risk = riskScoring.score(RiskInput(
             pullRequestState: .unknown,
             issueState: issueState,
@@ -369,7 +371,7 @@ struct BountyTrackerService {
             claimStatus: resolvedClaim,
             mergeableState: "unknown",
             hasMaintainerComment: false,
-            competitionCount: dto.claims?.count ?? 0,
+            competitionCount: competitionCount,
             competitorMerged: false,
             issueAlreadyRewarded: rewarded,
             assignmentRequired: BountyParsing.assignmentRequired(in: algoraText),
@@ -407,7 +409,7 @@ struct BountyTrackerService {
             nextAction: risk.nextAction,
             latestMaintainerComment: "",
             latestBotComment: BountyParsing.latestAlgoraBotComment(from: issueComments),
-            competitionCount: dto.claims?.count ?? 0,
+            competitionCount: competitionCount,
             hasRewardedSignal: rewarded,
             requiresVideo: BountyParsing.requiresVideo(in: algoraText),
             hasDemoProof: false,
@@ -443,6 +445,7 @@ struct BountyTrackerService {
         let amount = verification.amountUsd ?? 0
         let claim = BountyParsing.paymentStatus(in: algoraText) ?? BountyParsing.claimStatus(in: algoraText) ?? .unknown
         let rewarded = verification.alreadyRewarded || claim == .paymentSucceeded
+        let competitionCount = await bountyWorkPullRequestCount(owner: slug.owner, repo: slug.repo, issueNumber: item.number, token: token)
         let risk = riskScoring.score(RiskInput(
             pullRequestState: .unknown,
             issueState: verification.issueState,
@@ -450,7 +453,7 @@ struct BountyTrackerService {
             claimStatus: claim,
             mergeableState: "unknown",
             hasMaintainerComment: false,
-            competitionCount: 0,
+            competitionCount: competitionCount,
             competitorMerged: false,
             issueAlreadyRewarded: rewarded,
             assignmentRequired: BountyParsing.assignmentRequired(in: algoraText),
@@ -488,7 +491,7 @@ struct BountyTrackerService {
             nextAction: risk.nextAction,
             latestMaintainerComment: "",
             latestBotComment: BountyParsing.latestAlgoraBotComment(from: issueComments),
-            competitionCount: 0,
+            competitionCount: competitionCount,
             hasRewardedSignal: rewarded,
             requiresVideo: BountyParsing.requiresVideo(in: algoraText),
             hasDemoProof: false,
@@ -546,6 +549,13 @@ struct BountyTrackerService {
             updatedAt: now,
             lastRefreshedAt: nil
         )
+    }
+
+    private func bountyWorkPullRequestCount(owner: String, repo: String, issueNumber: Int, excludingPullRequest: Int? = nil, token: String?) async -> Int {
+        let items = (try? await github.searchBountyWorkPullRequests(owner: owner, repo: repo, issueNumber: issueNumber, token: token)) ?? []
+        return items.filter { item in
+            item.state.lowercased() == "open" && item.number != excludingPullRequest
+        }.count
     }
 
     private func competitorSnapshots(owner: String, repo: String, issueNumber: Int, username: String, ownPR: Int, token: String) async -> [CompetitorPRSnapshot] {
@@ -742,7 +752,7 @@ struct DiscoverFilters: Equatable {
         if recentlyUpdated, let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()), snapshot.updatedAt < cutoff { return false }
         if minimumPayout > 0 && (snapshot.amount == 0 || snapshot.amount < minimumPayout) { return false }
         if maximumPayout > 0 && snapshot.amount > maximumPayout { return false }
-        if lowCompetition && max(snapshot.competitionCount, commentCount) > 5 { return false }
+        if lowCompetition && snapshot.competitionCount > 5 { return false }
         if finishableToday && snapshot.amount > 750 { return false }
         if let requiresVideo, snapshot.requiresVideo != requiresVideo { return false }
         if let assignmentRequired, snapshot.assignedOnly != assignmentRequired { return false }
