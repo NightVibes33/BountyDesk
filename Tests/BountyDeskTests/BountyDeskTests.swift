@@ -42,7 +42,7 @@ final class BountyParsingTests: XCTestCase {
     func testAlgoraOnlyVerificationAcceptsLegacyAlgoraUserCommentWithClaimMarker() {
         let verification = BountyParsing.classifyAlgoraOnly(
             issue: Self.issue(body: "Plain issue text is not trusted."),
-            comments: [Self.comment(login: "algora-pbc", body: "💎 **amithm001** is offering a **$50** bounty for this issue. View and reward the bounty at `algora.io/amithmandassociates`.")],
+            comments: [Self.comment(login: "algora-pbc", body: "💎 **amithm001** is offering a **$50** bounty for this issue. View and reward the bounty at `algora.io/amithmandassociates`. Claim the bounty by commenting `/claim #2` in your PR.")],
             repo: "org/repo",
             claimEvidenceText: "@algora-pbc /claim #2"
         )
@@ -53,7 +53,7 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertTrue(verification.claimFlowSeen)
     }
 
-    func testAlgoraOnlyVerificationAcceptsOfficialAlgoraLabelEvents() {
+    func testAlgoraOnlyVerificationRejectsOfficialAlgoraLabelEventsWithoutIssueComment() {
         let verification = BountyParsing.classifyAlgoraOnly(
             issue: Self.issue(body: "Algora managed template bounty."),
             comments: [],
@@ -65,10 +65,10 @@ final class BountyParsingTests: XCTestCase {
                 "algora-pbc[bot] labeled pull request 🙋 Bounty claim"
             ]
         )
-        XCTAssertEqual(verification.source, .algora)
-        XCTAssertTrue(verification.verified)
-        XCTAssertEqual(verification.amountUsd, 1_000)
-        XCTAssertTrue(verification.claimFlowSeen)
+        XCTAssertEqual(verification.source, .notAlgora)
+        XCTAssertFalse(verification.verified)
+        XCTAssertFalse(verification.algoraBotSeen)
+        XCTAssertEqual(verification.excludedReason, "No algora-pbc issue comment found")
     }
 
     func testDiscoveryVerificationRequiresAlgoraBotIssueComment() {
@@ -113,7 +113,7 @@ final class BountyParsingTests: XCTestCase {
             XCTAssertEqual(verification.source, .notAlgora, body)
             XCTAssertFalse(verification.verified, body)
             XCTAssertFalse(verification.algoraBotSeen, body)
-            XCTAssertEqual(verification.excludedReason, "No Algora bot comment or official Algora event found", body)
+            XCTAssertEqual(verification.excludedReason, "No algora-pbc issue comment found", body)
         }
     }
 
@@ -126,9 +126,34 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertEqual(verification.source, .notAlgora)
         XCTAssertFalse(verification.verified)
         XCTAssertTrue(verification.algoraBotSeen)
-        XCTAssertEqual(verification.excludedReason, "Algora evidence found, but bounty amount or claim flow missing")
+        XCTAssertEqual(verification.excludedReason, "Algora bot found, but bounty amount or claim flow missing")
     }
 
+
+    func testAlgoraAttemptTableParsingCountsWipSolutionsAndRewards() {
+        let body = """
+        | Attempt | Started (UTC) | Solution | Actions |
+        | --- | --- | --- | --- |
+        | 🟢 @user | May 11, 2026 | #54 | Reward |
+        | 🟢 @other | May 12, 2026 | WIP | |
+        """
+        let rows = BountyParsing.parseAlgoraAttemptTable(body, issueNumber: 123)
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows[0].author, "user")
+        XCTAssertEqual(rows[0].prNumber, 54)
+        XCTAssertTrue(rows[0].rewardSeen)
+        XCTAssertEqual(rows[0].state, .rewarded)
+        XCTAssertEqual(rows[1].author, "other")
+        XCTAssertNil(rows[1].prNumber)
+        XCTAssertEqual(rows[1].state, .attemptOnly)
+    }
+
+    func testRewardAndExactClaimSignals() {
+        XCTAssertTrue(BountyParsing.claimSeen(in: "@algora-pbc /claim #123", issueNumber: 123))
+        XCTAssertFalse(BountyParsing.claimSeen(in: "@algora-pbc /claim #124", issueNumber: 123))
+        XCTAssertTrue(BountyParsing.rewardSignalSeen(in: "Winner selected. https://algora.io/claims/abc payout sent"))
+        XCTAssertFalse(BountyParsing.rewardSignalSeen(in: "Needs more tests before review."))
+    }
 
     func testPaymentStatusParsing() {
         XCTAssertEqual(BountyParsing.paymentStatus(in: "claim moved to payment_processing"), .paymentProcessing)
@@ -469,32 +494,14 @@ final class GitHubClientTests: XCTestCase {
         XCTAssertTrue(queries.contains { $0.contains("\"@algora-pbc\"") })
     }
 
-    func testBountyWorkPullRequestSearchFindsClaimAndAttemptPRs() async throws {
+    func testBountyWorkPullRequestSearchFindsClaimAndIssueReferencePRs() async throws {
         var queries: [String] = []
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/search/issues")
             let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
             queries.append(query)
             let items: String
-            if query.contains("\"/attempt #123\"") {
-                items = """
-                [{
-                  "url": "https://api.github.com/repos/org/repo/issues/8",
-                  "repository_url": "https://api.github.com/repos/org/repo",
-                  "html_url": "https://github.com/org/repo/pull/8",
-                  "number": 8,
-                  "title": "Attempt bounty",
-                  "body": "/attempt #123",
-                  "state": "open",
-                  "labels": [],
-                  "user": {"login":"other","avatar_url":null,"html_url":"https://github.com/other","type":"User"},
-                  "comments": 0,
-                  "updated_at": "2026-05-22T06:00:00Z",
-                  "created_at": "2026-05-22T05:00:00Z",
-                  "pull_request": {"url":"https://api.github.com/repos/org/repo/pulls/8","html_url":"https://github.com/org/repo/pull/8","merged_at":null}
-                }]
-                """
-            } else if query.contains("#123") {
+            if query.contains("/claim #123") {
                 items = """
                 [{
                   "url": "https://api.github.com/repos/org/repo/issues/7",
@@ -512,6 +519,24 @@ final class GitHubClientTests: XCTestCase {
                   "pull_request": {"url":"https://api.github.com/repos/org/repo/pulls/7","html_url":"https://github.com/org/repo/pull/7","merged_at":null}
                 }]
                 """
+            } else if query.contains("closes #123") {
+                items = """
+                [{
+                  "url": "https://api.github.com/repos/org/repo/issues/8",
+                  "repository_url": "https://api.github.com/repos/org/repo",
+                  "html_url": "https://github.com/org/repo/pull/8",
+                  "number": 8,
+                  "title": "Close bounty",
+                  "body": "closes #123",
+                  "state": "open",
+                  "labels": [],
+                  "user": {"login":"other","avatar_url":null,"html_url":"https://github.com/other","type":"User"},
+                  "comments": 0,
+                  "updated_at": "2026-05-22T06:00:00Z",
+                  "created_at": "2026-05-22T05:00:00Z",
+                  "pull_request": {"url":"https://api.github.com/repos/org/repo/pulls/8","html_url":"https://github.com/org/repo/pull/8","merged_at":null}
+                }]
+                """
             } else {
                 items = "[]"
             }
@@ -524,7 +549,9 @@ final class GitHubClientTests: XCTestCase {
         let items = try await GitHubClient(session: Self.mockSession()).searchBountyWorkPullRequests(owner: "org", repo: "repo", issueNumber: 123, token: nil)
         XCTAssertEqual(items.map(\.number), [8, 7])
         XCTAssertTrue(queries.contains { $0.contains("/claim #123") })
-        XCTAssertTrue(queries.contains { $0.contains("/attempt #123") })
+        XCTAssertTrue(queries.contains { $0.contains("#123") })
+        XCTAssertTrue(queries.contains { $0.contains("closes #123") })
+        XCTAssertTrue(queries.contains { $0.contains("fixes #123") })
     }
 
     func testRefreshUsesClaimIssueNumberBeforeIncidentalReferences() async {
@@ -633,7 +660,7 @@ final class GitHubClientTests: XCTestCase {
         XCTAssertTrue(result.bounties.isEmpty)
     }
 
-    func testRefreshFindsBountyFromOfficialAlgoraLabelEvents() async {
+    func testRefreshExcludesOfficialAlgoraLabelEventsWithoutIssueBotComment() async {
         MockURLProtocol.handler = { request in
             let path = request.url!.path
             let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
@@ -686,12 +713,10 @@ final class GitHubClientTests: XCTestCase {
             riskScoring: RiskScoringService()
         )
         let result = await service.refreshCurrentBounties(githubToken: "secret", algoraToken: nil, watchedOrgs: [])
-        XCTAssertEqual(result.activeClaimPullRequestCount, 1)
-        XCTAssertEqual(result.bounties.count, 1)
-        XCTAssertEqual(result.bounties[0].issueNumber, 42)
-        XCTAssertEqual(result.bounties[0].linkedPullRequestNumber, 10)
-        XCTAssertEqual(result.bounties[0].amount, 1_000)
-        XCTAssertTrue(result.bounties[0].algoraEvidence.contains("algora-pbc[bot] labeled issue $1K"))
+        XCTAssertEqual(result.claimPullRequestCount, 1)
+        XCTAssertEqual(result.activeClaimPullRequestCount, 0)
+        XCTAssertEqual(result.skippedPullRequestCount, 1)
+        XCTAssertTrue(result.bounties.isEmpty)
     }
 
     func testRecentAuthoredPullRequestSearchUsesBroadOpenClosedQueries() async throws {
@@ -928,8 +953,14 @@ final class AlgoraFallbackTests: XCTestCase {
                 ]
                 """.data(using: .utf8)!
                 return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
-            case "/repos/org/repo/issues/123/events":
+            case "/repos/org/repo/pulls/44":
+                return Self.pullResponse(number: 44, body: "/claim #123")
+            case "/repos/org/repo/issues/44", "/repos/org/repo/issues/44/comments", "/repos/org/repo/pulls/44/comments", "/repos/org/repo/issues/123/events":
                 return Self.jsonArrayResponse(for: request)
+            case "/repos/org/repo/commits/abc/check-runs":
+                return Self.checkRunsResponse()
+            case "/repos/org/repo/commits/abc/status":
+                return Self.statusResponse()
             default:
                 XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
                 return Self.jsonArrayResponse(for: request)
@@ -973,8 +1004,14 @@ final class AlgoraFallbackTests: XCTestCase {
                 ]
                 """.data(using: .utf8)!
                 return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
-            case "/repos/org/repo/issues/123/events":
+            case "/repos/org/repo/pulls/45":
+                return Self.pullResponse(number: 45, body: "/claim #123")
+            case "/repos/org/repo/issues/45", "/repos/org/repo/issues/45/comments", "/repos/org/repo/pulls/45/comments", "/repos/org/repo/issues/123/events":
                 return Self.jsonArrayResponse(for: request)
+            case "/repos/org/repo/commits/abc/check-runs":
+                return Self.checkRunsResponse()
+            case "/repos/org/repo/commits/abc/status":
+                return Self.statusResponse()
             default:
                 XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
                 return Self.jsonArrayResponse(for: request)
@@ -1083,6 +1120,41 @@ final class AlgoraFallbackTests: XCTestCase {
         }
         """.data(using: .utf8)!
         return (HTTPURLResponse(url: URL(string: "https://api.github.com/repos/org/repo/issues/123")!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+    }
+
+    private static func pullResponse(number: Int, body: String) -> (HTTPURLResponse, Data) {
+        let json = """
+        {
+          "html_url": "https://github.com/org/repo/pull/\(number)",
+          "number": \(number),
+          "state": "open",
+          "title": "Claim bounty",
+          "body": "\(body)",
+          "draft": false,
+          "merged_at": null,
+          "mergeable": true,
+          "mergeable_state": "clean",
+          "user": {"login":"other","type":"User"},
+          "labels": [],
+          "head": {"sha":"abc"},
+          "base": {"sha":"base"},
+          "changed_files": 1,
+          "additions": 5,
+          "deletions": 1,
+          "updated_at": "2026-05-22T05:00:00Z"
+        }
+        """.data(using: .utf8)!
+        return (HTTPURLResponse(url: URL(string: "https://api.github.com/repos/org/repo/pulls/\(number)")!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+    }
+
+    private static func checkRunsResponse() -> (HTTPURLResponse, Data) {
+        let data = #"{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}"#.data(using: .utf8)!
+        return (HTTPURLResponse(url: URL(string: "https://api.github.com/repos/org/repo/commits/abc/check-runs")!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+    }
+
+    private static func statusResponse() -> (HTTPURLResponse, Data) {
+        let data = #"{"state":"success","statuses":[]}"#.data(using: .utf8)!
+        return (HTTPURLResponse(url: URL(string: "https://api.github.com/repos/org/repo/commits/abc/status")!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
     }
 
     private static func jsonArrayResponse(for request: URLRequest) -> (HTTPURLResponse, Data) {

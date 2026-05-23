@@ -184,6 +184,8 @@ struct BountyDetailHero: View {
         StageChip(stage: bounty.managementStage)
         PriorityChip(priority: bounty.userPriority)
         StatusChip(text: bounty.workflowStatus.rawValue, systemImage: bounty.workflowStatus.systemImage, tint: bounty.workflowStatus.tint)
+        StatusChip(text: bounty.competitionLevel.label, systemImage: "person.3", tint: bounty.competitionLevel.tint)
+        StatusChip(text: bounty.recommendation.label, systemImage: bounty.recommendation.systemImage, tint: bounty.recommendation.tint)
         RiskChip(level: bounty.riskLevel)
         if bounty.isFollowUpDue {
             StatusChip(text: "Due", systemImage: "calendar.badge.exclamationmark", tint: .red)

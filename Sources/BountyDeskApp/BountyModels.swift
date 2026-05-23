@@ -66,6 +66,70 @@ enum ClaimStatus: String, CaseIterable, Codable, Identifiable {
     var id: String { rawValue }
 }
 
+enum CompetitionLevel: String, CaseIterable, Codable, Identifiable {
+    case none
+    case low
+    case medium
+    case high
+    case extreme
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .none: return "No Competition"
+        case .low: return "Low Competition"
+        case .medium: return "Medium Competition"
+        case .high: return "High Competition"
+        case .extreme: return "Extreme Competition"
+        }
+    }
+}
+
+enum CompetitorState: String, CaseIterable, Codable, Identifiable {
+    case attemptOnly = "attempt_only"
+    case openPr = "open_pr"
+    case mergedPr = "merged_pr"
+    case closedPr = "closed_pr"
+    case rewarded
+    case unknown
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .attemptOnly: return "Attempt Only"
+        case .openPr: return "Open PR"
+        case .mergedPr: return "Merged PR"
+        case .closedPr: return "Closed PR"
+        case .rewarded: return "Rewarded"
+        case .unknown: return "Unknown"
+        }
+    }
+}
+
+enum BountyRecommendation: String, CaseIterable, Codable, Identifiable {
+    case goodTarget = "good_target"
+    case possibleButContested = "possible_but_contested"
+    case lowPriority = "low_priority"
+    case notWorthIt = "not_worth_it"
+    case alreadyRewardedOrSaturated = "already_rewarded_or_saturated"
+    case notAlgora = "not_algora"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .goodTarget: return "Good Target"
+        case .possibleButContested: return "Possible, Contested"
+        case .lowPriority: return "Low Priority"
+        case .notWorthIt: return "Not Worth It"
+        case .alreadyRewardedOrSaturated: return "Already Rewarded/Saturated"
+        case .notAlgora: return "Not Algora"
+        }
+    }
+}
+
 enum CheckState: String, CaseIterable, Codable, Identifiable {
     case passing = "Passing"
     case failing = "Failing"
@@ -229,6 +293,14 @@ final class Bounty {
     var latestMaintainerComment: String
     var latestBotComment: String
     var competitionCount: Int
+    var competitionLevelRaw: String = CompetitionLevel.none.rawValue
+    var recommendationRaw: String = BountyRecommendation.lowPriority.rawValue
+    var totalAttemptsFromAlgoraTable: Int = 0
+    var openClaimPrs: Int = 0
+    var closedClaimPrs: Int = 0
+    var mergedClaimPrs: Int = 0
+    var rewardedClaims: Int = 0
+    var seriousOpenCompetitors: Int = 0
     var hasRewardedSignal: Bool
     var requiresVideo: Bool
     var hasDemoProof: Bool
@@ -277,6 +349,14 @@ final class Bounty {
         self.latestMaintainerComment = snapshot.latestMaintainerComment
         self.latestBotComment = snapshot.latestBotComment
         self.competitionCount = snapshot.competitionCount
+        self.competitionLevelRaw = snapshot.competitionLevel.rawValue
+        self.recommendationRaw = snapshot.recommendation.rawValue
+        self.totalAttemptsFromAlgoraTable = snapshot.totalAttemptsFromAlgoraTable
+        self.openClaimPrs = snapshot.openClaimPrs
+        self.closedClaimPrs = snapshot.closedClaimPrs
+        self.mergedClaimPrs = snapshot.mergedClaimPrs
+        self.rewardedClaims = snapshot.rewardedClaims
+        self.seriousOpenCompetitors = snapshot.seriousOpenCompetitors
         self.hasRewardedSignal = snapshot.hasRewardedSignal
         self.requiresVideo = snapshot.requiresVideo
         self.hasDemoProof = snapshot.hasDemoProof
@@ -324,6 +404,14 @@ final class Bounty {
         latestMaintainerComment = snapshot.latestMaintainerComment
         latestBotComment = snapshot.latestBotComment
         competitionCount = snapshot.competitionCount
+        competitionLevel = snapshot.competitionLevel
+        recommendation = snapshot.recommendation
+        totalAttemptsFromAlgoraTable = snapshot.totalAttemptsFromAlgoraTable
+        openClaimPrs = snapshot.openClaimPrs
+        closedClaimPrs = snapshot.closedClaimPrs
+        mergedClaimPrs = snapshot.mergedClaimPrs
+        rewardedClaims = snapshot.rewardedClaims
+        seriousOpenCompetitors = snapshot.seriousOpenCompetitors
         hasRewardedSignal = snapshot.hasRewardedSignal
         requiresVideo = snapshot.requiresVideo
         hasDemoProof = snapshot.hasDemoProof
@@ -366,6 +454,16 @@ final class Bounty {
     var riskLevel: RiskLevel {
         get { RiskLevel(rawValue: riskLevelRaw) ?? .medium }
         set { riskLevelRaw = newValue.rawValue }
+    }
+
+    var competitionLevel: CompetitionLevel {
+        get { CompetitionLevel(rawValue: competitionLevelRaw) ?? .none }
+        set { competitionLevelRaw = newValue.rawValue }
+    }
+
+    var recommendation: BountyRecommendation {
+        get { BountyRecommendation(rawValue: recommendationRaw) ?? .lowPriority }
+        set { recommendationRaw = newValue.rawValue }
     }
 
     var labels: [String] {
@@ -704,12 +802,18 @@ final class CompetitorPR {
     var title: String
     var htmlURLString: String
     var stateRaw: String
+    var competitorStateRaw: String = CompetitorState.unknown.rawValue
     var checkStateRaw: String
+    var checksSummary: String = ""
+    var claimSeen: Bool = false
+    var rewardSeen: Bool = false
+    var serious: Bool = false
     var changedFiles: Int
     var additions: Int
     var deletions: Int
     var labelsText: String
     var latestComment: String
+    var evidenceText: String = ""
     var hasDemoProof: Bool
     var hasMaintainerApproval: Bool
     var updatedAt: Date
@@ -722,12 +826,18 @@ final class CompetitorPR {
         title = snapshot.title
         htmlURLString = snapshot.htmlURLString
         stateRaw = snapshot.state.rawValue
+        competitorStateRaw = snapshot.competitorState.rawValue
         checkStateRaw = snapshot.checkState.rawValue
+        checksSummary = snapshot.checksSummary
+        claimSeen = snapshot.claimSeen
+        rewardSeen = snapshot.rewardSeen
+        serious = snapshot.serious
         changedFiles = snapshot.changedFiles
         additions = snapshot.additions
         deletions = snapshot.deletions
         labelsText = LineCodec.encode(snapshot.labels)
         latestComment = snapshot.latestComment
+        evidenceText = LineCodec.encode(snapshot.evidence)
         hasDemoProof = snapshot.hasDemoProof
         hasMaintainerApproval = snapshot.hasMaintainerApproval
         updatedAt = snapshot.updatedAt
@@ -740,12 +850,18 @@ final class CompetitorPR {
         title = snapshot.title
         htmlURLString = snapshot.htmlURLString
         state = snapshot.state
+        competitorState = snapshot.competitorState
         checkState = snapshot.checkState
+        checksSummary = snapshot.checksSummary
+        claimSeen = snapshot.claimSeen
+        rewardSeen = snapshot.rewardSeen
+        serious = snapshot.serious
         changedFiles = snapshot.changedFiles
         additions = snapshot.additions
         deletions = snapshot.deletions
         labels = snapshot.labels
         latestComment = snapshot.latestComment
+        evidence = snapshot.evidence
         hasDemoProof = snapshot.hasDemoProof
         hasMaintainerApproval = snapshot.hasMaintainerApproval
         updatedAt = snapshot.updatedAt
@@ -756,6 +872,11 @@ final class CompetitorPR {
         set { stateRaw = newValue.rawValue }
     }
 
+    var competitorState: CompetitorState {
+        get { CompetitorState(rawValue: competitorStateRaw) ?? .unknown }
+        set { competitorStateRaw = newValue.rawValue }
+    }
+
     var checkState: CheckState {
         get { CheckState(rawValue: checkStateRaw) ?? .unknown }
         set { checkStateRaw = newValue.rawValue }
@@ -764,6 +885,11 @@ final class CompetitorPR {
     var labels: [String] {
         get { LineCodec.decode(labelsText) }
         set { labelsText = LineCodec.encode(newValue) }
+    }
+
+    var evidence: [String] {
+        get { LineCodec.decode(evidenceText) }
+        set { evidenceText = LineCodec.encode(newValue) }
     }
 }
 
@@ -885,6 +1011,14 @@ struct TrackedBountySnapshot: Equatable {
     var latestMaintainerComment: String
     var latestBotComment: String
     var competitionCount: Int
+    var competitionLevel: CompetitionLevel = .none
+    var recommendation: BountyRecommendation = .lowPriority
+    var totalAttemptsFromAlgoraTable: Int = 0
+    var openClaimPrs: Int = 0
+    var closedClaimPrs: Int = 0
+    var mergedClaimPrs: Int = 0
+    var rewardedClaims: Int = 0
+    var seriousOpenCompetitors: Int = 0
     var hasRewardedSignal: Bool
     var requiresVideo: Bool
     var hasDemoProof: Bool
@@ -970,12 +1104,18 @@ struct CompetitorPRSnapshot: Equatable {
     var title: String
     var htmlURLString: String
     var state: PullRequestState
+    var competitorState: CompetitorState = .unknown
     var checkState: CheckState
+    var checksSummary: String = ""
+    var claimSeen: Bool = false
+    var rewardSeen: Bool = false
+    var serious: Bool = false
     var changedFiles: Int
     var additions: Int
     var deletions: Int
     var labels: [String]
     var latestComment: String
+    var evidence: [String] = []
     var hasDemoProof: Bool
     var hasMaintainerApproval: Bool
     var updatedAt: Date

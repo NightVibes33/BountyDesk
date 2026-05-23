@@ -216,9 +216,11 @@ struct BountyTrackerService {
         let checkRuns = try? await checksTask
         let statuses = try? await statusTask
         let checkState = resolveCheckState(checkRuns: checkRuns, statuses: statuses)
-        let competitors = await competitorSnapshots(owner: slug.owner, repo: slug.repo, issueNumber: issueNumber, username: username, ownPR: pr.number, token: token)
-        let activeCompetitorCount = competitors.filter { $0.state == .open || $0.state == .draft }.count
-        let competitorMerged = competitors.contains { $0.state == .merged }
+        let stableID = "github:\(slug.owner)/\(slug.repo)#\(issueNumber):pr\(pr.number)"
+        let competition = await competitionReport(owner: slug.owner, repo: slug.repo, issueNumber: issueNumber, token: token, ourPullRequestNumber: pr.number, cachedIssue: issue, cachedIssueComments: issueComments)
+        let competitors = competitorSnapshots(from: competition, bountyStableID: stableID, owner: slug.owner, repo: slug.repo)
+        let activeCompetitorCount = competition.seriousOpenCompetitors
+        let competitorMerged = competition.mergedClaimPrs > 0
         let codeOfConduct = await codeOfConductTask
         let contributing = await contributingTask
         let readme = await readmeTask
@@ -231,7 +233,7 @@ struct BountyTrackerService {
         let priorRejected = BountyParsing.priorRejectedSignal(in: textCorpus, username: username)
         let hasVerification = BountyParsing.hasClearVerification(in: prBody)
         let hasTests = BountyParsing.hasTests(in: prBody)
-        let rewarded = verification.alreadyRewarded || claimStatus == .paymentSucceeded
+        let rewarded = verification.alreadyRewarded || claimStatus == .paymentSucceeded || competition.rewardedClaims > 0
         let riskInput = RiskInput(
             pullRequestState: prState,
             issueState: issueState,
@@ -254,7 +256,6 @@ struct BountyTrackerService {
             codeOfConductFound: codeOfConduct != nil
         )
         let risk = riskScoring.score(riskInput)
-        let stableID = "github:\(slug.owner)/\(slug.repo)#\(issueNumber):pr\(pr.number)"
         let now = Date()
         let bounty = TrackedBountySnapshot(
             stableID: stableID,
@@ -276,11 +277,19 @@ struct BountyTrackerService {
             checkState: checkState,
             riskLevel: risk.level,
             payoutChance: risk.score,
-            riskFactors: risk.factors,
-            nextAction: risk.nextAction,
+            riskFactors: risk.factors + competition.reasons,
+            nextAction: nextAction(from: competition.recommendation, fallback: risk.nextAction),
             latestMaintainerComment: latestMaintainer,
             latestBotComment: latestBot,
-            competitionCount: activeCompetitorCount,
+            competitionCount: competition.openClaimPrs,
+            competitionLevel: competition.competitionLevel,
+            recommendation: competition.recommendation,
+            totalAttemptsFromAlgoraTable: competition.totalAttemptsFromAlgoraTable,
+            openClaimPrs: competition.openClaimPrs,
+            closedClaimPrs: competition.closedClaimPrs,
+            mergedClaimPrs: competition.mergedClaimPrs,
+            rewardedClaims: competition.rewardedClaims,
+            seriousOpenCompetitors: competition.seriousOpenCompetitors,
             hasRewardedSignal: rewarded,
             requiresVideo: requiresVideo,
             hasDemoProof: hasDemoProof,
@@ -354,7 +363,7 @@ struct BountyTrackerService {
             repoArchived: repository?.archived ?? false,
             updatedAt: now
         )
-        let riskSnapshot = RiskSnapshotData(stableID: UUID().uuidString, bountyStableID: stableID, score: risk.score, level: risk.level, factors: risk.factors, nextAction: risk.nextAction, createdAt: Date())
+        let riskSnapshot = RiskSnapshotData(stableID: UUID().uuidString, bountyStableID: stableID, score: risk.score, level: risk.level, factors: risk.factors + competition.reasons, nextAction: nextAction(from: competition.recommendation, fallback: risk.nextAction), createdAt: Date())
         return BuiltBounty(bounty: bounty, pullRequest: pull, issue: issueSnapshot, ruleSet: ruleSet, competitors: competitors, riskSnapshot: riskSnapshot)
     }
 
@@ -423,8 +432,8 @@ struct BountyTrackerService {
         let resolvedClaim = claim == .unknown ? (BountyParsing.paymentStatus(in: algoraText) ?? BountyParsing.claimStatus(in: algoraText) ?? .unknown) : claim
         let updated = maxDate(dto.updatedAt ?? dto.createdAt ?? Date(), issue.updatedAt)
         let issueState = verification.issueState
-        let rewarded = verification.alreadyRewarded || resolvedClaim == .paymentSucceeded
-        let competitionCount = await bountyWorkPullRequestCount(owner: owner, repo: repo, issueNumber: number, token: githubToken)
+        let competition = await competitionReport(owner: owner, repo: repo, issueNumber: number, token: githubToken, cachedIssue: issue, cachedIssueComments: issueComments)
+        let rewarded = verification.alreadyRewarded || resolvedClaim == .paymentSucceeded || competition.rewardedClaims > 0
         let risk = riskScoring.score(RiskInput(
             pullRequestState: .unknown,
             issueState: issueState,
@@ -432,8 +441,8 @@ struct BountyTrackerService {
             claimStatus: resolvedClaim,
             mergeableState: "unknown",
             hasMaintainerComment: false,
-            competitionCount: competitionCount,
-            competitorMerged: false,
+            competitionCount: competition.seriousOpenCompetitors,
+            competitorMerged: competition.mergedClaimPrs > 0,
             issueAlreadyRewarded: rewarded,
             assignmentRequired: BountyParsing.assignmentRequired(in: algoraText),
             userAppearsAssigned: false,
@@ -466,11 +475,19 @@ struct BountyTrackerService {
             checkState: .unknown,
             riskLevel: risk.level,
             payoutChance: risk.score,
-            riskFactors: risk.factors,
-            nextAction: risk.nextAction,
+            riskFactors: risk.factors + competition.reasons,
+            nextAction: nextAction(from: competition.recommendation, fallback: risk.nextAction),
             latestMaintainerComment: "",
             latestBotComment: BountyParsing.latestAlgoraBotComment(from: issueComments),
-            competitionCount: competitionCount,
+            competitionCount: competition.openClaimPrs,
+            competitionLevel: competition.competitionLevel,
+            recommendation: competition.recommendation,
+            totalAttemptsFromAlgoraTable: competition.totalAttemptsFromAlgoraTable,
+            openClaimPrs: competition.openClaimPrs,
+            closedClaimPrs: competition.closedClaimPrs,
+            mergedClaimPrs: competition.mergedClaimPrs,
+            rewardedClaims: competition.rewardedClaims,
+            seriousOpenCompetitors: competition.seriousOpenCompetitors,
             hasRewardedSignal: rewarded,
             requiresVideo: BountyParsing.requiresVideo(in: algoraText),
             hasDemoProof: false,
@@ -505,8 +522,8 @@ struct BountyTrackerService {
         let algoraText = verification.evidence.joined(separator: "\n")
         let amount = verification.amountUsd ?? 0
         let claim = BountyParsing.paymentStatus(in: algoraText) ?? BountyParsing.claimStatus(in: algoraText) ?? .unknown
-        let rewarded = verification.alreadyRewarded || claim == .paymentSucceeded
-        let competitionCount = await bountyWorkPullRequestCount(owner: slug.owner, repo: slug.repo, issueNumber: item.number, token: token)
+        let competition = await competitionReport(owner: slug.owner, repo: slug.repo, issueNumber: item.number, token: token, cachedIssue: issue, cachedIssueComments: issueComments)
+        let rewarded = verification.alreadyRewarded || claim == .paymentSucceeded || competition.rewardedClaims > 0
         let risk = riskScoring.score(RiskInput(
             pullRequestState: .unknown,
             issueState: verification.issueState,
@@ -514,8 +531,8 @@ struct BountyTrackerService {
             claimStatus: claim,
             mergeableState: "unknown",
             hasMaintainerComment: false,
-            competitionCount: competitionCount,
-            competitorMerged: false,
+            competitionCount: competition.seriousOpenCompetitors,
+            competitorMerged: competition.mergedClaimPrs > 0,
             issueAlreadyRewarded: rewarded,
             assignmentRequired: BountyParsing.assignmentRequired(in: algoraText),
             userAppearsAssigned: false,
@@ -548,11 +565,19 @@ struct BountyTrackerService {
             checkState: .unknown,
             riskLevel: risk.level,
             payoutChance: risk.score,
-            riskFactors: risk.factors,
-            nextAction: risk.nextAction,
+            riskFactors: risk.factors + competition.reasons,
+            nextAction: nextAction(from: competition.recommendation, fallback: risk.nextAction),
             latestMaintainerComment: "",
             latestBotComment: BountyParsing.latestAlgoraBotComment(from: issueComments),
-            competitionCount: competitionCount,
+            competitionCount: competition.openClaimPrs,
+            competitionLevel: competition.competitionLevel,
+            recommendation: competition.recommendation,
+            totalAttemptsFromAlgoraTable: competition.totalAttemptsFromAlgoraTable,
+            openClaimPrs: competition.openClaimPrs,
+            closedClaimPrs: competition.closedClaimPrs,
+            mergedClaimPrs: competition.mergedClaimPrs,
+            rewardedClaims: competition.rewardedClaims,
+            seriousOpenCompetitors: competition.seriousOpenCompetitors,
             hasRewardedSignal: rewarded,
             requiresVideo: BountyParsing.requiresVideo(in: algoraText),
             hasDemoProof: false,
@@ -612,40 +637,367 @@ struct BountyTrackerService {
         )
     }
 
-    private func bountyWorkPullRequestCount(owner: String, repo: String, issueNumber: Int, excludingPullRequest: Int? = nil, token: String?) async -> Int {
-        let items = (try? await github.searchBountyWorkPullRequests(owner: owner, repo: repo, issueNumber: issueNumber, token: token, perPage: 25, state: "open")) ?? []
-        return items.filter { item in
-            item.state.lowercased() == "open" && item.number != excludingPullRequest
-        }.count
+    private func competitionReport(
+        owner: String,
+        repo: String,
+        issueNumber: Int,
+        token: String?,
+        ourPullRequestNumber: Int? = nil,
+        cachedIssue: GitHubIssueResponse? = nil,
+        cachedIssueComments: [GitHubComment]? = nil
+    ) async -> BountyCompetitionReport {
+        let repoSlug = "\(owner)/\(repo)"
+        let now = Date()
+        let issue = cachedIssue ?? ((try? await github.issue(owner: owner, repo: repo, number: issueNumber, token: token)) ?? GitHubIssueResponse(
+            htmlUrl: "https://github.com/\(owner)/\(repo)/issues/\(issueNumber)",
+            number: issueNumber,
+            state: "open",
+            title: "Bounty candidate",
+            body: nil,
+            labels: [],
+            user: GitHubUserSummary(login: "unknown"),
+            assignees: [],
+            updatedAt: now,
+            closedAt: nil
+        ))
+        let issueComments = cachedIssueComments ?? ((try? await github.issueComments(owner: owner, repo: repo, number: issueNumber, token: token)) ?? [])
+        let verification = BountyParsing.classifyAlgoraDiscoveryOnly(issue: issue, comments: issueComments, repo: repoSlug, lastCheckedAt: now)
+        guard verification.verified else {
+            return .notAlgora(issue: issue, repo: repoSlug, reason: verification.excludedReason ?? "No algora-pbc[bot] comment found", verification: verification, lastCheckedAt: now)
+        }
+
+        let attemptRows = BountyParsing.parseAlgoraAttemptTables(from: issueComments, issueNumber: issueNumber)
+        let searchItems = (try? await github.searchBountyWorkPullRequests(owner: owner, repo: repo, issueNumber: issueNumber, token: token, perPage: 100)) ?? []
+        let attemptNumbers = attemptRows.compactMap(\.prNumber)
+        let searchedNumbers = searchItems.map(\.number)
+        let prNumbers = orderedUniqueNumbers(searchedNumbers + attemptNumbers + [ourPullRequestNumber].compactMap { $0 })
+        var searchItemsByNumber: [Int: GitHubSearchItem] = [:]
+        for item in searchItems {
+            searchItemsByNumber[item.number] = item
+        }
+        let prSummaries = await competitorDetails(
+            owner: owner,
+            repo: repo,
+            issueNumber: issueNumber,
+            prNumbers: Array(prNumbers.prefix(60)),
+            searchItemsByNumber: searchItemsByNumber,
+            attemptRows: attemptRows,
+            token: token
+        )
+
+        let prNumberSet = Set(prSummaries.compactMap(\.prNumber))
+        let attemptOnlyRows = attemptRows.filter { row in
+            guard let prNumber = row.prNumber else { return true }
+            return prNumberSet.contains(prNumber) == false
+        }.map { row in
+            var enriched = row
+            if let prNumber = row.prNumber {
+                enriched.prUrl = "https://github.com/\(owner)/\(repo)/pull/\(prNumber)"
+            }
+            return enriched
+        }
+        let competitors = (prSummaries + attemptOnlyRows).sorted { lhs, rhs in
+            (lhs.updatedAt ?? .distantPast) > (rhs.updatedAt ?? .distantPast)
+        }
+        let ourSummary = ourPullRequestNumber.flatMap { number in competitors.first { $0.prNumber == number } }
+        let competitorOnly = competitors.filter { summary in
+            guard let ourPullRequestNumber else { return true }
+            return summary.prNumber != ourPullRequestNumber
+        }
+        let claimPrs = competitors.filter { $0.prNumber != nil && $0.claimSeen }
+        let openClaimPrs = claimPrs.filter { $0.state == .openPr }.count
+        let closedClaimPrs = claimPrs.filter { $0.state == .closedPr }.count
+        let mergedClaimPrs = claimPrs.filter { $0.state == .mergedPr }.count
+        let rewardedClaims = competitors.filter { $0.rewardSeen }.count
+        let seriousOpenCompetitors = competitorOnly.filter { $0.serious }.count
+        let level = competitionLevel(openClaimPrs: openClaimPrs, rewardedClaims: rewardedClaims)
+        let decision = recommendationAndReasons(
+            verified: verification.verified,
+            issueState: verification.issueState,
+            amount: verification.amountUsd ?? 0,
+            openClaimPrs: openClaimPrs,
+            rewardedClaims: rewardedClaims,
+            seriousOpenCompetitors: seriousOpenCompetitors,
+            requiresVideo: BountyParsing.requiresVideo(in: verification.evidence.joined(separator: "\n") + "\n" + (issue.body ?? "")),
+            hasRunnableTests: false,
+            hasMaintainerRejection: competitorOnly.contains { BountyParsing.maintainerRejectionSeen(in: $0.evidence.joined(separator: "\n")) },
+            ourSummary: ourSummary
+        )
+
+        return BountyCompetitionReport(
+            repo: repoSlug,
+            issueNumber: issueNumber,
+            issueUrl: issue.htmlUrl,
+            issueTitle: issue.title,
+            issueState: verification.issueState,
+            source: .algora,
+            algoraVerified: true,
+            algoraBotSeen: verification.algoraBotSeen,
+            bountyAmountUsd: verification.amountUsd,
+            claimFlowSeen: verification.claimFlowSeen,
+            rewardActionSeen: verification.rewardActionSeen,
+            ourPrNumber: ourSummary?.prNumber ?? ourPullRequestNumber,
+            ourPrUrl: ourSummary?.prUrl,
+            ourPrState: ourSummary?.state.pullRequestState,
+            ourPrMerged: ourSummary?.merged ?? false,
+            ourPrMergeable: ourSummary?.mergeable,
+            ourPrMergeableState: ourSummary?.mergeableState,
+            ourCheckSummary: ourSummary?.checksSummary ?? "none",
+            ourPaidSignal: ourSummary?.rewardSeen ?? false,
+            totalAttemptsFromAlgoraTable: attemptRows.count,
+            openClaimPrs: openClaimPrs,
+            closedClaimPrs: closedClaimPrs,
+            mergedClaimPrs: mergedClaimPrs,
+            rewardedClaims: rewardedClaims,
+            seriousOpenCompetitors: seriousOpenCompetitors,
+            competitionLevel: level,
+            competitors: competitorOnly,
+            recommendation: decision.recommendation,
+            reasons: decision.reasons,
+            lastCheckedAt: now
+        )
     }
 
-    private func competitorSnapshots(owner: String, repo: String, issueNumber: Int, username: String, ownPR: Int, token: String) async -> [CompetitorPRSnapshot] {
-        let items = (try? await github.searchCompetitorPullRequests(owner: owner, repo: repo, issueNumber: issueNumber, token: token)) ?? []
-        var snapshots: [CompetitorPRSnapshot] = []
-        for item in items.prefix(12) where item.number != ownPR && item.user.login.caseInsensitiveCompare(username) != .orderedSame {
-            if let pr = try? await github.pullRequest(owner: owner, repo: repo, number: item.number, token: token) {
-                let state = resolvePullRequestState(pr)
-                snapshots.append(CompetitorPRSnapshot(
-                    stableID: "github:\(owner)/\(repo):competitor-pr\(item.number)",
-                    bountyStableID: "github:\(owner)/\(repo)#\(issueNumber):pr\(ownPR)",
-                    number: item.number,
-                    authorLogin: item.user.login,
-                    title: item.title,
-                    htmlURLString: item.htmlUrl,
-                    state: state,
-                    checkState: .unknown,
-                    changedFiles: pr.changedFiles ?? 0,
-                    additions: pr.additions ?? 0,
-                    deletions: pr.deletions ?? 0,
-                    labels: (pr.labels ?? item.labels).map(\.name),
-                    latestComment: item.body?.trimmedSummary(limit: 220) ?? "",
-                    hasDemoProof: BountyParsing.hasDemoProof(in: pr.body ?? item.body ?? ""),
-                    hasMaintainerApproval: (pr.labels ?? []).contains { $0.name.lowercased().contains("approved") || $0.name.lowercased().contains("reviewed") },
-                    updatedAt: pr.updatedAt
-                ))
-            }
+    private func competitorDetail(owner: String, repo: String, issueNumber: Int, prNumber: Int, searchItem: GitHubSearchItem?, attemptRows: [CompetitorSummary], token: String?) async -> CompetitorSummary? {
+        guard let pr = try? await github.pullRequest(owner: owner, repo: repo, number: prNumber, token: token) else { return nil }
+        async let prIssueTask = try? github.issue(owner: owner, repo: repo, number: prNumber, token: token)
+        async let commentsTask = try? github.pullRequestComments(owner: owner, repo: repo, number: prNumber, token: token)
+        async let reviewCommentsTask = try? github.pullRequestReviewComments(owner: owner, repo: repo, number: prNumber, token: token)
+        async let checkRunsTask = try? github.checkRuns(owner: owner, repo: repo, ref: pr.head.sha, token: token)
+        async let statusTask = try? github.combinedStatus(owner: owner, repo: repo, ref: pr.head.sha, token: token)
+        let prIssue = await prIssueTask
+        let comments = (await commentsTask) ?? []
+        let reviewComments = (await reviewCommentsTask) ?? []
+        let checkRuns = await checkRunsTask
+        let statuses = await statusTask
+        let checkState = resolveCheckState(checkRuns: checkRuns, statuses: statuses)
+        let checksSummary = summarizeChecks(checkRuns: checkRuns, statuses: statuses)
+        let labels = (pr.labels ?? []) + (prIssue?.labels ?? []) + (searchItem?.labels ?? [])
+        let body = pr.body ?? searchItem?.body ?? ""
+        let commentsText = (comments + reviewComments).map(\.body).joined(separator: "\n")
+        let labelsText = labels.map(\.name).joined(separator: "\n")
+        let evidenceText = [body, commentsText, labelsText].joined(separator: "\n")
+        let tableRows = attemptRows.filter { $0.prNumber == prNumber }
+        let tableRewardSeen = tableRows.contains { $0.rewardSeen }
+        let rewardSeen = tableRewardSeen || BountyParsing.rewardSignalSeen(in: commentsText + "\n" + labelsText)
+        let claimSeen = BountyParsing.claimSeen(in: evidenceText, issueNumber: issueNumber) || tableRows.contains { $0.claimSeen }
+        let prState = resolvePullRequestState(pr)
+        let competitorState: CompetitorState
+        if prState == .merged {
+            competitorState = .mergedPr
+        } else if prState == .closed {
+            competitorState = .closedPr
+        } else if prState == .open || prState == .draft {
+            competitorState = .openPr
+        } else {
+            competitorState = .unknown
         }
-        return snapshots
+        let rejectionSeen = BountyParsing.maintainerRejectionSeen(in: commentsText)
+        let looksRelevant = claimSeen || BountyParsing.linkedIssueNumbers(in: body).contains(issueNumber) || (pr.changedFiles ?? 0) > 0
+        let serious = claimSeen
+            && competitorState == .openPr
+            && pr.draft != true
+            && (checkState == .passing || checkState == .noneConfigured)
+            && looksRelevant
+            && rejectionSeen == false
+        let evidence = ([body.trimmedSummary(limit: 220)] + tableRows.flatMap(\.evidence) + comments.map { $0.body.trimmedSummary(limit: 160) } + reviewComments.map { $0.body.trimmedSummary(limit: 160) })
+            .filter { $0.isEmpty == false }
+        return CompetitorSummary(
+            prNumber: prNumber,
+            prUrl: pr.htmlUrl,
+            author: pr.user.login,
+            title: pr.title,
+            state: competitorState,
+            merged: prState == .merged,
+            rewardSeen: rewardSeen,
+            checksSummary: checksSummary,
+            claimSeen: claimSeen,
+            updatedAt: pr.updatedAt,
+            evidence: evidence,
+            isDraft: pr.draft ?? false,
+            serious: serious,
+            mergeable: pr.mergeable,
+            mergeableState: pr.mergeableState
+        )
+    }
+
+    private func competitorDetails(
+        owner: String,
+        repo: String,
+        issueNumber: Int,
+        prNumbers: [Int],
+        searchItemsByNumber: [Int: GitHubSearchItem],
+        attemptRows: [CompetitorSummary],
+        token: String?
+    ) async -> [CompetitorSummary] {
+        var details: [CompetitorSummary] = []
+        var index = 0
+        while index < prNumbers.count {
+            let end = Swift.min(index + 8, prNumbers.count)
+            let batch = Array(prNumbers[index..<end])
+            await withTaskGroup(of: CompetitorSummary?.self) { group in
+                for number in batch {
+                    group.addTask {
+                        await competitorDetail(
+                            owner: owner,
+                            repo: repo,
+                            issueNumber: issueNumber,
+                            prNumber: number,
+                            searchItem: searchItemsByNumber[number],
+                            attemptRows: attemptRows,
+                            token: token
+                        )
+                    }
+                }
+                for await detail in group {
+                    if let detail {
+                        details.append(detail)
+                    }
+                }
+            }
+            index = end
+        }
+        return details.sorted { lhs, rhs in
+            (lhs.updatedAt ?? .distantPast) > (rhs.updatedAt ?? .distantPast)
+        }
+    }
+
+    private func competitorSnapshots(from report: BountyCompetitionReport, bountyStableID: String, owner: String, repo: String) -> [CompetitorPRSnapshot] {
+        report.competitors.compactMap { competitor in
+            guard let number = competitor.prNumber, let url = competitor.prUrl else { return nil }
+            let pullState = competitor.state.pullRequestState
+            return CompetitorPRSnapshot(
+                stableID: "github:\(owner)/\(repo):competitor-pr\(number)",
+                bountyStableID: bountyStableID,
+                number: number,
+                authorLogin: competitor.author,
+                title: competitor.title ?? "Competing solution",
+                htmlURLString: url,
+                state: pullState,
+                competitorState: competitor.state,
+                checkState: checkState(from: competitor.checksSummary),
+                checksSummary: competitor.checksSummary ?? "none",
+                claimSeen: competitor.claimSeen,
+                rewardSeen: competitor.rewardSeen,
+                serious: competitor.serious,
+                changedFiles: 0,
+                additions: 0,
+                deletions: 0,
+                labels: competitor.rewardSeen ? ["Reward seen"] : [],
+                latestComment: competitor.evidence.first ?? "",
+                evidence: competitor.evidence,
+                hasDemoProof: BountyParsing.hasDemoProof(in: competitor.evidence.joined(separator: "\n")),
+                hasMaintainerApproval: competitor.rewardSeen,
+                updatedAt: competitor.updatedAt ?? Date()
+            )
+        }
+    }
+
+    private func competitionLevel(openClaimPrs: Int, rewardedClaims: Int) -> CompetitionLevel {
+        if openClaimPrs >= 20 || rewardedClaims >= 5 { return .extreme }
+        if openClaimPrs >= 10 { return .high }
+        if openClaimPrs >= 4 { return .medium }
+        if openClaimPrs >= 1 { return .low }
+        return rewardedClaims == 0 ? .none : .low
+    }
+
+    private func recommendationAndReasons(
+        verified: Bool,
+        issueState: IssueState,
+        amount: Int,
+        openClaimPrs: Int,
+        rewardedClaims: Int,
+        seriousOpenCompetitors: Int,
+        requiresVideo: Bool,
+        hasRunnableTests: Bool,
+        hasMaintainerRejection: Bool,
+        ourSummary: CompetitorSummary?
+    ) -> (recommendation: BountyRecommendation, reasons: [String]) {
+        guard verified else { return (.notAlgora, ["No algora-pbc[bot] proof found"]) }
+        var score = 0
+        var reasons: [String] = ["Verified Algora bounty"]
+        score += 40
+        if issueState == .open { score += 20; reasons.append("Issue is open") }
+        if openClaimPrs == 0 { score += 20; reasons.append("No open claim PRs") }
+        else if openClaimPrs <= 3 { score += 10; reasons.append("Low open claim PR count") }
+        if amount >= 50 { score += 10; reasons.append("Payout is at least $50") }
+        if hasRunnableTests { score += 10; reasons.append("Runnable tests or validation commands found") }
+        if openClaimPrs >= 10 { score -= 20; reasons.append("High open claim PR count") }
+        if openClaimPrs >= 20 { score -= 40; reasons.append("Extreme open claim PR count") }
+        if rewardedClaims > 0 { score -= 40; reasons.append("Reward or paid signals were seen") }
+        if amount > 0 && amount < 10 { score -= 20; reasons.append("Low payout") }
+        if requiresVideo { score -= 30; reasons.append("Demo or video proof may be required") }
+        if hasMaintainerRejection { score -= 50; reasons.append("Similar PR rejection signal found") }
+        if seriousOpenCompetitors > 0 { reasons.append("\(seriousOpenCompetitors) serious open competing solution(s)") }
+        if let ourSummary {
+            if ourSummary.state == .closedPr { score -= 40; reasons.append("Our PR is closed") }
+            if ourSummary.isDraft { score -= 20; reasons.append("Our PR is still draft") }
+            if ourSummary.mergeable == false || ourSummary.mergeableState == "dirty" || ourSummary.mergeableState == "blocked" { score -= 25; reasons.append("Our PR is not mergeable") }
+            if ourSummary.checksSummary?.contains("failure") == true { score -= 30; reasons.append("Our checks are failing") }
+            if ourSummary.serious { score += 10; reasons.append("Our PR has a serious claim shape") }
+        }
+        let recommendation: BountyRecommendation
+        if rewardedClaims >= 5 || openClaimPrs >= 20 {
+            recommendation = .alreadyRewardedOrSaturated
+        } else if score >= 80 {
+            recommendation = .goodTarget
+        } else if score >= 50 {
+            recommendation = .possibleButContested
+        } else if score >= 20 {
+            recommendation = .lowPriority
+        } else {
+            recommendation = .notWorthIt
+        }
+        return (recommendation, reasons)
+    }
+
+    private func summarizeChecks(checkRuns: GitHubCheckRunsResponse?, statuses: GitHubCombinedStatusResponse?) -> String {
+        var counts: [String: Int] = [:]
+        for run in checkRuns?.checkRuns ?? [] {
+            let key = normalizeCheckState(run.conclusion ?? run.status)
+            counts[key, default: 0] += 1
+        }
+        for status in statuses?.statuses ?? [] {
+            let key = normalizeCheckState(status.state)
+            counts[key, default: 0] += 1
+        }
+        guard counts.isEmpty == false else { return "none" }
+        let order = ["failure", "error", "cancelled", "timed_out", "action_required", "pending", "in_progress", "success", "neutral", "skipped"]
+        return counts.keys.sorted { lhs, rhs in
+            (order.firstIndex(of: lhs) ?? order.count) < (order.firstIndex(of: rhs) ?? order.count)
+        }.map { key in "\(key):\(counts[key] ?? 0)" }.joined(separator: " ")
+    }
+
+    private func normalizeCheckState(_ raw: String) -> String {
+        let lower = raw.lowercased()
+        if ["success", "neutral", "skipped", "failure", "error", "cancelled", "timed_out", "action_required", "pending", "in_progress"].contains(lower) {
+            return lower
+        }
+        return lower.isEmpty ? "unknown" : lower
+    }
+
+    private func checkState(from summary: String?) -> CheckState {
+        guard let summary, summary != "none" else { return .noneConfigured }
+        if summary.contains("failure") || summary.contains("error") || summary.contains("cancelled") || summary.contains("timed_out") || summary.contains("action_required") { return .failing }
+        if summary.contains("pending") || summary.contains("in_progress") { return .pending }
+        if summary.contains("success") { return .passing }
+        return .unknown
+    }
+
+    private func nextAction(from recommendation: BountyRecommendation, fallback: String) -> String {
+        switch recommendation {
+        case .goodTarget: return fallback
+        case .possibleButContested: return "Proceed only if our PR is clearly stronger than competing claim PRs."
+        case .lowPriority: return "Treat as low priority until competition or payout improves."
+        case .notWorthIt: return "Do not pursue unless the bounty changes materially."
+        case .alreadyRewardedOrSaturated: return "Do not pursue: reward signals or saturation are already visible."
+        case .notAlgora: return "Do not track: no verified Algora payout flow."
+        }
+    }
+
+    private func orderedUniqueNumbers(_ values: [Int]) -> [Int] {
+        var seen = Set<Int>()
+        return values.filter { seen.insert($0).inserted }
     }
 
     private func firstRepositoryFile(owner: String, repo: String, paths: [String], token: String) async -> String? {
@@ -790,7 +1142,7 @@ enum BountyTrackerServiceError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .noBountyEvidence: return "Not Algora: no official Algora amount evidence and claim flow was found for the linked issue."
+        case .noBountyEvidence: return "Not Algora: no Algora issue comment with amount and claim flow was found for the linked issue."
         }
     }
 }

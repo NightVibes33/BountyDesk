@@ -1089,12 +1089,17 @@ private struct BountyDetailView: View {
                 HStack { Text("Payout"); Spacer(); Text(bounty.payoutText).fontWeight(.semibold) }
                 LabeledContent("Attempt / Claim Flow", value: bounty.algoraEvidence.contains("Algora claim flow found") ? "Detected" : "Missing")
                 LabeledContent("Reward Status", value: bounty.hasRewardedSignal ? "Rewarded or paid" : bounty.claimStatus.rawValue)
+                LabeledContent("Open Claim PRs", value: "\(bounty.openClaimPrs)")
+                LabeledContent("Algora Attempts", value: "\(bounty.totalAttemptsFromAlgoraTable)")
+                LabeledContent("Reward Links Seen", value: "\(bounty.rewardedClaims)")
+                LabeledContent("Competition", value: bounty.competitionLevel.label)
+                LabeledContent("Recommendation", value: bounty.recommendation.label)
                 LabeledContent("Last Checked", value: bounty.lastRefreshedAt?.formatted(date: .abbreviated, time: .shortened) ?? "Not checked")
                 LabeledContent("Risk", value: "\(bounty.riskLevel.rawValue) · \(bounty.payoutChance)%")
                 LabeledContent("Next Action", value: bounty.nextAction)
-                HStack(spacing: 8) {
-                    StatusChip(text: bounty.workflowStatus.rawValue, systemImage: bounty.workflowStatus.systemImage, tint: .blue)
-                    RiskChip(level: bounty.riskLevel)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { summaryChips }
+                    VStack(alignment: .leading, spacing: 6) { summaryChips }
                 }
                 Link("GitHub Issue", destination: bounty.githubIssueURL)
                 Link("Algora Page", destination: bounty.algoraIssueURL)
@@ -1191,6 +1196,15 @@ private struct BountyDetailView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var summaryChips: some View {
+        StatusChip(text: "Verified Algora", systemImage: "checkmark.seal", tint: .green)
+        StatusChip(text: bounty.workflowStatus.rawValue, systemImage: bounty.workflowStatus.systemImage, tint: .blue)
+        StatusChip(text: bounty.competitionLevel.label, systemImage: "person.3", tint: bounty.competitionLevel.tint)
+        StatusChip(text: bounty.recommendation.label, systemImage: bounty.recommendation.systemImage, tint: bounty.recommendation.tint)
+        RiskChip(level: bounty.riskLevel)
     }
 }
 
@@ -1405,10 +1419,11 @@ private struct CompetitionView: View {
                             Text(pr.authorLogin).font(.subheadline).foregroundStyle(.secondary)
                             HStack {
                                 StatusChip(text: pr.checkState.rawValue, systemImage: pr.checkState.systemImage, tint: pr.checkState == .failing ? .red : .green)
-                                Text("\(pr.changedFiles) files · +\(pr.additions) / -\(pr.deletions)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                StatusChip(text: pr.claimSeen ? "Claim Seen" : "No Claim", systemImage: pr.claimSeen ? "checkmark.seal" : "xmark.seal", tint: pr.claimSeen ? .green : .secondary)
+                                if pr.rewardSeen { StatusChip(text: "Reward Seen", systemImage: "banknote", tint: .purple) }
+                                if pr.serious { StatusChip(text: "Serious", systemImage: "scope", tint: .orange) }
                             }
+                            LabeledContent("Checks", value: pr.checksSummary.isEmpty ? pr.checkState.rawValue : pr.checksSummary)
                             LabeledContent("Demo Proof", value: pr.hasDemoProof ? "Yes" : "No")
                             LabeledContent("Maintainer Approval", value: pr.hasMaintainerApproval ? "Detected" : "Not detected")
                             if pr.latestComment.isEmpty == false {
@@ -1758,7 +1773,7 @@ private struct AddBountyView: View {
                     }
                 }
                 Section("Import") {
-                    Text("Manual payout, Gitcoin, crypto wallet, PayPal, BTC, sats, USDC, and generic bounty URLs are excluded. BountyDesk only tracks GitHub issues verified by official Algora evidence with amount and claim flow.")
+                    Text("Manual payout, Gitcoin, crypto wallet, PayPal, BTC, sats, USDC, and generic bounty URLs are excluded. BountyDesk only tracks GitHub issues verified by an Algora issue comment with amount and claim flow.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -1773,7 +1788,7 @@ private struct AddBountyView: View {
                         if app.addManualURL(urlText) {
                             dismiss()
                         } else {
-                            errorMessage = "Not Algora. Excluded: no official Algora evidence / no Algora claim flow."
+                            errorMessage = "Not Algora. Excluded: no Algora issue comment / no Algora claim flow."
                         }
                     }
                 }
@@ -1865,7 +1880,13 @@ private struct BountyRow: View {
         StatusChip(text: bounty.checkState.rawValue, systemImage: bounty.checkState.systemImage, tint: bounty.checkState.tint)
         RiskChip(level: bounty.riskLevel)
         if bounty.competitionCount > 0 {
-            StatusChip(text: workPullRequestText(bounty.competitionCount), systemImage: "person.3", tint: .orange)
+            StatusChip(text: workPullRequestText(bounty.competitionCount), systemImage: "person.3", tint: bounty.competitionLevel.tint)
+        }
+        if bounty.rewardedClaims > 0 {
+            StatusChip(text: "Reward Links Seen: \(bounty.rewardedClaims)", systemImage: "banknote", tint: .purple)
+        }
+        if bounty.recommendation == .notWorthIt || bounty.recommendation == .alreadyRewardedOrSaturated {
+            StatusChip(text: "Do Not Pursue", systemImage: "hand.raised", tint: .red)
         }
     }
 }
@@ -1885,7 +1906,10 @@ private struct BountyCompactRow: View {
                         StageChip(stage: bounty.managementStage)
                         PriorityChip(priority: bounty.userPriority)
                         if bounty.competitionCount > 0 {
-                            StatusChip(text: workPullRequestText(bounty.competitionCount), systemImage: "person.3", tint: .orange)
+                            StatusChip(text: workPullRequestText(bounty.competitionCount), systemImage: "person.3", tint: bounty.competitionLevel.tint)
+                        }
+                        if bounty.recommendation == .notWorthIt || bounty.recommendation == .alreadyRewardedOrSaturated {
+                            StatusChip(text: "Do Not Pursue", systemImage: "hand.raised", tint: .red)
                         }
                     }
                 }
@@ -1925,8 +1949,10 @@ private struct BountySnapshotRow: View {
                     .contentTransition(.numericText())
             }
             HStack {
+                StatusChip(text: "Verified Algora", systemImage: "checkmark.seal", tint: .green)
                 RiskChip(level: snapshot.riskLevel)
-                StatusChip(text: workPullRequestText(snapshot.competitionCount), systemImage: "person.3", tint: snapshot.competitionCount > 0 ? .orange : .secondary)
+                StatusChip(text: workPullRequestText(snapshot.competitionCount), systemImage: "person.3", tint: snapshot.competitionCount > 0 ? snapshot.competitionLevel.tint : .secondary)
+                StatusChip(text: snapshot.recommendation.label, systemImage: snapshot.recommendation.systemImage, tint: snapshot.recommendation.tint)
             }
             Text(snapshot.nextAction).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
         }

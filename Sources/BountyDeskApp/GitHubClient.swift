@@ -100,9 +100,10 @@ struct GitHubClient {
         let stateQualifier = state.map { " state:\($0)" } ?? ""
         let repoQualifier = "repo:\(owner)/\(repo) is:pr\(stateQualifier)"
         let queries = [
-            "\(repoQualifier) #\(issueNumber)",
             "\(repoQualifier) \"/claim #\(issueNumber)\" in:body,comments",
-            "\(repoQualifier) \"/attempt #\(issueNumber)\" in:body,comments"
+            "\(repoQualifier) \"#\(issueNumber)\"",
+            "\(repoQualifier) \"closes #\(issueNumber)\" in:body",
+            "\(repoQualifier) \"fixes #\(issueNumber)\" in:body"
         ]
         return try await searchPullRequests(queries: queries, token: token, perPage: perPage)
     }
@@ -128,6 +129,10 @@ struct GitHubClient {
     }
 
     func pullRequestComments(owner: String, repo: String, number: Int, token: String?) async throws -> [GitHubComment] {
+        try await request("/repos/\(owner)/\(repo)/issues/\(number)/comments?per_page=100", token: token)
+    }
+
+    func pullRequestReviewComments(owner: String, repo: String, number: Int, token: String?) async throws -> [GitHubComment] {
         try await request("/repos/\(owner)/\(repo)/pulls/\(number)/comments?per_page=100", token: token)
     }
 

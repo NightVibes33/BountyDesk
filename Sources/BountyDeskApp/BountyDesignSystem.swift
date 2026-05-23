@@ -127,3 +127,40 @@ extension RiskLevel {
         }
     }
 }
+
+
+extension CompetitionLevel {
+    var tint: Color {
+        switch self {
+        case .none: return .green
+        case .low: return .teal
+        case .medium: return .orange
+        case .high: return .red
+        case .extreme: return .purple
+        }
+    }
+}
+
+extension BountyRecommendation {
+    var tint: Color {
+        switch self {
+        case .goodTarget: return .green
+        case .possibleButContested: return .orange
+        case .lowPriority: return .secondary
+        case .notWorthIt: return .red
+        case .alreadyRewardedOrSaturated: return .purple
+        case .notAlgora: return .secondary
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .goodTarget: return "target"
+        case .possibleButContested: return "person.3"
+        case .lowPriority: return "arrow.down.circle"
+        case .notWorthIt: return "hand.raised"
+        case .alreadyRewardedOrSaturated: return "exclamationmark.octagon"
+        case .notAlgora: return "xmark.seal"
+        }
+    }
+}
