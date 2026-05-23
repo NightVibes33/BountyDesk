@@ -157,7 +157,7 @@ enum BountyParsing {
                 issueState: issueState,
                 openPrsMentioningIssue: openPrsMentioningIssue,
                 claimPrsCount: claimPrsCount,
-                excludedReason: "No algora-pbc[bot] issue comment found",
+                excludedReason: "No algora-pbc issue comment found",
                 lastCheckedAt: lastCheckedAt,
                 evidence: []
             )
@@ -258,8 +258,7 @@ enum BountyParsing {
 
     private static func isAlgoraBotIssueComment(_ comment: GitHubComment) -> Bool {
         let login = comment.user.login.lowercased()
-        let type = comment.user.type.lowercased()
-        return login == "algora-pbc[bot]" || (login == "algora-pbc" && type == "bot")
+        return login == "algora-pbc[bot]" || login == "algora-pbc"
     }
 
     static func latestAlgoraBotComment(from comments: [GitHubComment]) -> String {

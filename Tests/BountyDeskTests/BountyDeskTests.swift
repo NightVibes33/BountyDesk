@@ -872,6 +872,50 @@ final class AlgoraFallbackTests: XCTestCase {
         XCTAssertTrue(result.bounties.first?.algoraEvidence.first == "Verified Algora bounty")
     }
 
+    func testDiscoverAcceptsLiveAlgoraPbcUserCommentShape() async {
+        MockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/search/issues":
+                let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+                if query.contains("is:pr") {
+                    return Self.searchPullRequestResponse(number: 45, body: "/claim #123")
+                }
+                return Self.searchIssueResponse(body: "Issue body is not trusted by itself")
+            case "/repos/org/repo/issues/123":
+                return Self.issueResponse(body: "Issue body is not trusted by itself")
+            case "/repos/org/repo/issues/123/comments":
+                let data = """
+                [
+                  {
+                    "id": 1,
+                    "body": "💎 **org** is offering a **$50** bounty for this issue. View and reward the bounty at `algora.io/org/repo/issues/123`\n\nGot a pull request resolving this? Claim the bounty by commenting `/claim #123` in your PR.",
+                    "user": {"login":"algora-pbc","type":"User"},
+                    "html_url":"https://github.com/org/repo/issues/123#issuecomment-1",
+                    "created_at":"2026-05-22T04:00:00Z",
+                    "updated_at":"2026-05-22T04:00:00Z"
+                  }
+                ]
+                """.data(using: .utf8)!
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+            case "/repos/org/repo/issues/123/events":
+                return Self.jsonArrayResponse(for: request)
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return Self.jsonArrayResponse(for: request)
+            }
+        }
+        let session = GitHubClientTests.mockSession()
+        let service = BountyTrackerService(
+            github: GitHubClient(session: session),
+            algoraPublic: AlgoraPublicClient(session: session),
+            riskScoring: RiskScoringService()
+        )
+        let result = await service.discoverBounties(filters: DiscoverFilters(), githubToken: nil)
+        XCTAssertEqual(result.bounties.count, 1)
+        XCTAssertEqual(result.bounties.first?.amount, 50)
+        XCTAssertEqual(result.bounties.first?.competitionCount, 1)
+    }
+
     func testDiscoverContinuesWhenPublicAlgoraFails() async {
         MockURLProtocol.handler = { request in
             if request.url?.host == "api.github.com" {
