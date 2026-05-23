@@ -43,6 +43,31 @@ final class BountyTrackerViewModel: ObservableObject {
 
     func configure(modelContext: ModelContext) {
         self.modelContext = modelContext
+        installBackgroundRefreshHandler()
+    }
+
+    private func installBackgroundRefreshHandler() {
+        BackgroundRefreshCoordinator.shared.configure { [weak self] in
+            guard let self else { return false }
+            return await self.refreshCurrentBountiesInBackground()
+        }
+    }
+
+    func refreshCurrentBountiesInBackground() async -> Bool {
+        guard let modelContext, isRefreshing == false else { return false }
+        do {
+            let watchedOrgs = try modelContext.fetch(FetchDescriptor<WatchedOrg>())
+            let previousUpdate = refreshDiagnostics.updatedAt
+            await refreshCurrentBounties(watchedOrgs: watchedOrgs)
+            let didRefresh = refreshDiagnostics.updatedAt != previousUpdate
+            if didRefresh {
+                UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastBackgroundRefreshAt")
+            }
+            return didRefresh
+        } catch {
+            syncMessage = error.localizedDescription
+            return false
+        }
     }
 
     func restoreSession() async {

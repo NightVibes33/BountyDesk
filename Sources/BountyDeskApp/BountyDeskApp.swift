@@ -30,7 +30,9 @@ struct BountyDeskApp: App {
     }()
 
     init() {
-        BackgroundRefreshCoordinator.shared.register()
+        Task { @MainActor in
+            BackgroundRefreshCoordinator.shared.register()
+        }
     }
 
     var body: some Scene {
@@ -44,7 +46,10 @@ struct BountyDeskApp: App {
                 Task { await viewModel.resumeGitHubDeviceLoginIfNeeded() }
             }
             if phase == .background {
-                BackgroundRefreshCoordinator.shared.scheduleAppRefresh(afterMinutes: refreshIntervalMinutes)
+                let minutes = refreshIntervalMinutes
+                Task { @MainActor in
+                    BackgroundRefreshCoordinator.shared.scheduleAppRefresh(afterMinutes: minutes)
+                }
             }
         }
     }

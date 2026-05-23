@@ -1579,6 +1579,7 @@ private struct SettingsView: View {
     @State private var algoraToken = ""
     @State private var newOrg = ""
     @AppStorage("refreshIntervalMinutes") private var refreshIntervalMinutes = 30
+    @AppStorage("lastBackgroundRefreshAt") private var lastBackgroundRefreshAt = 0.0
     @AppStorage("notifyMaintainerComments") private var notifyMaintainerComments = true
     @AppStorage("notifyChecks") private var notifyChecks = true
     @AppStorage("notifyPayment") private var notifyPayment = true
@@ -1648,6 +1649,13 @@ private struct SettingsView: View {
                 Section("Refresh") {
                     Stepper("Every \(refreshIntervalMinutes) minutes", value: $refreshIntervalMinutes, in: 15...240, step: 15)
                     Button("Refresh Now") { Task { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) } }
+                    if lastBackgroundRefreshAt > 0 {
+                        LabeledContent("Last Background Refresh", value: Date(timeIntervalSince1970: lastBackgroundRefreshAt).formatted(date: .abbreviated, time: .shortened))
+                    } else {
+                        Text("Background refresh has not completed yet. iOS decides when scheduled refresh work runs.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Refresh Diagnostics") {

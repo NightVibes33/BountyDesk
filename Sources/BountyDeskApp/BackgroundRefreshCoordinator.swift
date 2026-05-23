@@ -1,12 +1,14 @@
 import Foundation
 #if canImport(BackgroundTasks)
-import BackgroundTasks
+@preconcurrency import BackgroundTasks
 #endif
 
-final class BackgroundRefreshCoordinator: @unchecked Sendable {
+@MainActor
+final class BackgroundRefreshCoordinator {
     static let shared = BackgroundRefreshCoordinator()
     private let identifier = "com.example.bountydesk.refresh"
     private var didRegister = false
+    private var refreshHandler: (() async -> Bool)?
 
     private init() {}
 
@@ -15,12 +17,18 @@ final class BackgroundRefreshCoordinator: @unchecked Sendable {
         return stored == 0 ? 30 : stored
     }
 
+    func configure(refreshHandler: @escaping () async -> Bool) {
+        self.refreshHandler = refreshHandler
+    }
+
     func register() {
         #if canImport(BackgroundTasks)
         guard didRegister == false else { return }
         didRegister = true
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { [weak self] task in
-            self?.handle(task: task as? BGAppRefreshTask)
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
+            Task { @MainActor in
+                BackgroundRefreshCoordinator.shared.handle(task: task as? BGAppRefreshTask)
+            }
         }
         #endif
     }
@@ -41,10 +49,20 @@ final class BackgroundRefreshCoordinator: @unchecked Sendable {
     private func handle(task: BGAppRefreshTask?) {
         scheduleAppRefresh(afterMinutes: configuredIntervalMinutes)
         guard let task else { return }
+        let refreshTask = Task { @MainActor in
+            let success = await runRefreshHandler()
+            guard Task.isCancelled == false else { return }
+            task.setTaskCompleted(success: success)
+        }
         task.expirationHandler = {
+            refreshTask.cancel()
             task.setTaskCompleted(success: false)
         }
-        task.setTaskCompleted(success: true)
     }
     #endif
+
+    private func runRefreshHandler() async -> Bool {
+        guard let refreshHandler else { return false }
+        return await refreshHandler()
+    }
 }
