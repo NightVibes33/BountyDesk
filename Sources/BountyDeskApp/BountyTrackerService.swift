@@ -648,19 +648,32 @@ struct BountyTrackerService {
     ) async -> BountyCompetitionReport {
         let repoSlug = "\(owner)/\(repo)"
         let now = Date()
-        let issue = cachedIssue ?? ((try? await github.issue(owner: owner, repo: repo, number: issueNumber, token: token)) ?? GitHubIssueResponse(
-            htmlUrl: "https://github.com/\(owner)/\(repo)/issues/\(issueNumber)",
-            number: issueNumber,
-            state: "open",
-            title: "Bounty candidate",
-            body: nil,
-            labels: [],
-            user: GitHubUserSummary(login: "unknown"),
-            assignees: [],
-            updatedAt: now,
-            closedAt: nil
-        ))
-        let issueComments = cachedIssueComments ?? ((try? await github.issueComments(owner: owner, repo: repo, number: issueNumber, token: token)) ?? [])
+        let issue: GitHubIssueResponse
+        if let cachedIssue {
+            issue = cachedIssue
+        } else if let fetchedIssue = try? await github.issue(owner: owner, repo: repo, number: issueNumber, token: token) {
+            issue = fetchedIssue
+        } else {
+            issue = GitHubIssueResponse(
+                htmlUrl: "https://github.com/\(owner)/\(repo)/issues/\(issueNumber)",
+                number: issueNumber,
+                state: "open",
+                title: "Bounty candidate",
+                body: nil,
+                labels: [],
+                user: GitHubUserSummary(login: "unknown"),
+                assignees: [],
+                updatedAt: now,
+                closedAt: nil
+            )
+        }
+
+        let issueComments: [GitHubComment]
+        if let cachedIssueComments {
+            issueComments = cachedIssueComments
+        } else {
+            issueComments = (try? await github.issueComments(owner: owner, repo: repo, number: issueNumber, token: token)) ?? []
+        }
         let verification = BountyParsing.classifyAlgoraDiscoveryOnly(issue: issue, comments: issueComments, repo: repoSlug, lastCheckedAt: now)
         guard verification.verified else {
             return .notAlgora(issue: issue, repo: repoSlug, reason: verification.excludedReason ?? "No algora-pbc[bot] comment found", verification: verification, lastCheckedAt: now)
