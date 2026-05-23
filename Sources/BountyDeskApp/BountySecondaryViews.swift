@@ -65,13 +65,20 @@ struct DiscoverView: View {
                         ForEach(app.discoveredBounties, id: \.stableID) { bounty in
                             let isTracked = trackedIDs.contains(bounty.stableID)
                             VStack(alignment: .leading, spacing: 8) {
-                                BountySnapshotRow(snapshot: bounty)
+                                NavigationLink {
+                                    DiscoveredBountyDetailView(snapshot: bounty, isTracked: isTracked)
+                                } label: {
+                                    BountySnapshotRow(snapshot: bounty)
+                                }
+                                .buttonStyle(.plain)
                                 HStack(spacing: 8) {
                                     Button(isTracked ? "Tracked" : "Track") { app.trackDiscovered(bounty) }
                                         .buttonStyle(.bordered)
                                         .disabled(isTracked)
                                     if isTracked {
                                         StatusChip(text: "In queue", systemImage: "checkmark.circle", tint: .green)
+                                    } else {
+                                        StatusChip(text: "Tap row to inspect", systemImage: "info.circle", tint: .secondary)
                                     }
                                 }
                             }
@@ -100,6 +107,132 @@ struct DiscoverView: View {
 
     private var trackedIDs: Set<String> {
         Set(trackedBounties.map(\.stableID))
+    }
+}
+
+
+struct DiscoveredBountyDetailView: View {
+    @EnvironmentObject private var app: BountyTrackerViewModel
+    @Query(sort: \Bounty.updatedAt, order: .reverse) private var trackedBounties: [Bounty]
+    let snapshot: TrackedBountySnapshot
+    let isTracked: Bool
+
+    var body: some View {
+        ZStack {
+            BountyBackdrop()
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(snapshot.title)
+                            .font(.title3.weight(.semibold))
+                        Text("\(snapshot.repoOwner)/\(snapshot.repoName)#\(snapshot.issueNumber)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 8) { headerChips }
+                            VStack(alignment: .leading, spacing: 6) { headerChips }
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+                .listRowBackground(Color.clear)
+
+                Section("Decision") {
+                    LabeledContent("Payout", value: snapshot.amount > 0 ? snapshot.amount.formatted(.currency(code: snapshot.currency).precision(.fractionLength(0))) : "TBD")
+                    LabeledContent("Recommendation", value: snapshot.recommendation.label)
+                    LabeledContent("Competition", value: snapshot.competitionLevel.label)
+                    LabeledContent("Risk", value: "\(snapshot.riskLevel.rawValue) · \(snapshot.payoutChance)%")
+                    LabeledContent("Next Action", value: snapshot.nextAction)
+                    if currentlyTracked {
+                        StatusChip(text: "Already in queue", systemImage: "checkmark.circle", tint: .green)
+                    } else {
+                        Button { app.trackDiscovered(snapshot) } label: {
+                            Label("Track Bounty", systemImage: "plus.circle")
+                        }
+                    }
+                }
+
+                Section("Live Status") {
+                    LabeledContent("Issue State", value: snapshot.issueState.rawValue)
+                    LabeledContent("Claim Status", value: snapshot.claimStatus.rawValue)
+                    LabeledContent("Open Claim PRs", value: "\(snapshot.openClaimPrs)")
+                    LabeledContent("Closed Claim PRs", value: "\(snapshot.closedClaimPrs)")
+                    LabeledContent("Merged Claim PRs", value: "\(snapshot.mergedClaimPrs)")
+                    LabeledContent("Algora Attempts", value: "\(snapshot.totalAttemptsFromAlgoraTable)")
+                    LabeledContent("Reward Links Seen", value: "\(snapshot.rewardedClaims)")
+                    LabeledContent("Serious Competitors", value: "\(snapshot.seriousOpenCompetitors)")
+                    LabeledContent("Rewarded / Paid", value: snapshot.hasRewardedSignal ? "Yes" : "No")
+                    LabeledContent("Last Checked", value: snapshot.lastRefreshedAt?.formatted(date: .abbreviated, time: .shortened) ?? "Not checked")
+                }
+
+                Section("Issue") {
+                    Text(snapshot.issueBodySummary.isEmpty ? "No issue summary cached." : snapshot.issueBodySummary)
+                    Link("Open GitHub Issue", destination: githubIssueURL)
+                    Link("Open Algora Page", destination: algoraIssueURL)
+                    if let pullRequestURL { Link("Open Pull Request", destination: pullRequestURL) }
+                }
+
+                Section("Algora Evidence") {
+                    EvidenceList(values: snapshot.algoraEvidence, empty: "No Algora evidence cached.")
+                    EvidenceList(values: snapshot.rewardLinks, empty: "No reward or claim links found.")
+                    if snapshot.latestBotComment.isEmpty == false {
+                        Text(snapshot.latestBotComment)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Risk Factors") {
+                    EvidenceList(values: snapshot.riskFactors, empty: "No risk factors recorded.")
+                    LabeledContent("Requires Video", value: snapshot.requiresVideo ? "Yes" : "No")
+                    LabeledContent("Demo Proof", value: snapshot.hasDemoProof ? "Present" : "Missing")
+                    LabeledContent("Assigned Only", value: snapshot.assignedOnly ? "Yes" : "No")
+                    LabeledContent("Maintainer Assignment", value: snapshot.maintainerAssignmentRequired ? "Required" : "Not detected")
+                    LabeledContent("Tests Detected", value: snapshot.hasTests ? "Yes" : "No")
+                }
+            }
+            .scrollContentBackground(.hidden)
+        }
+        .navigationTitle("Bounty #\(snapshot.issueNumber)")
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button { app.copyToClipboard(githubIssueURL.absoluteString) } label: {
+                    Image(systemName: "link")
+                }
+                .accessibilityLabel("Copy issue link")
+                if currentlyTracked == false {
+                    Button { app.trackDiscovered(snapshot) } label: {
+                        Image(systemName: "plus.circle")
+                    }
+                    .accessibilityLabel("Track bounty")
+                }
+            }
+        }
+    }
+
+    private var currentlyTracked: Bool {
+        isTracked || trackedBounties.contains { $0.stableID == snapshot.stableID }
+    }
+
+    @ViewBuilder
+    private var headerChips: some View {
+        StatusChip(text: "Verified Algora", systemImage: "checkmark.seal", tint: .green)
+        StatusChip(text: snapshot.competitionLevel.label, systemImage: "person.3", tint: snapshot.competitionLevel.tint)
+        StatusChip(text: snapshot.recommendation.label, systemImage: snapshot.recommendation.systemImage, tint: snapshot.recommendation.tint)
+        RiskChip(level: snapshot.riskLevel)
+    }
+
+    private var githubIssueURL: URL {
+        URL(string: "https://github.com/\(snapshot.repoOwner)/\(snapshot.repoName)/issues/\(snapshot.issueNumber)")!
+    }
+
+    private var algoraIssueURL: URL {
+        URL(string: "https://algora.io/\(snapshot.repoOwner)/\(snapshot.repoName)/issues/\(snapshot.issueNumber)")!
+    }
+
+    private var pullRequestURL: URL? {
+        guard let number = snapshot.linkedPullRequestNumber else { return nil }
+        return URL(string: "https://github.com/\(snapshot.repoOwner)/\(snapshot.repoName)/pull/\(number)")
     }
 }
 
@@ -305,6 +438,10 @@ struct SettingsView: View {
                     HStack {
                         Label("\(app.debugLog.count) events", systemImage: "terminal")
                         Spacer()
+                        Button { app.copyDebugLog() } label: {
+                            Label("Copy Logs", systemImage: "doc.on.doc")
+                        }
+                        .disabled(app.debugLog.isEmpty)
                         Button("Clear") { app.clearDebugLog() }
                             .disabled(app.debugLog.isEmpty)
                     }

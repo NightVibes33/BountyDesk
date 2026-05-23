@@ -532,6 +532,17 @@ final class BountyTrackerViewModel: ObservableObject {
         #endif
     }
 
+    func copyDebugLog() {
+        guard debugLog.isEmpty == false else {
+            syncMessage = "No debug logs to copy."
+            return
+        }
+        let lines = debugLog.map { entry in
+            "[\(entry.timestamp.formatted(date: .abbreviated, time: .standard))] \(entry.message)"
+        }
+        copyToClipboard(lines.joined(separator: "\n"))
+    }
+
     func markdownExport(for bounties: [Bounty]) -> String {
         var lines = ["# BountyDesk Export", "", "Generated: \(Date().formatted())", ""]
         for bounty in bounties.sorted(by: { $0.updatedAt > $1.updatedAt }) {
