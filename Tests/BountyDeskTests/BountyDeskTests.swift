@@ -35,22 +35,26 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertTrue(verification.verified)
         XCTAssertEqual(verification.amountUsd, 50)
         XCTAssertTrue(verification.algoraBotSeen)
+        XCTAssertTrue(verification.amountSeen)
         XCTAssertTrue(verification.claimFlowSeen)
         XCTAssertTrue(verification.rewardActionSeen)
     }
 
-    func testAlgoraOnlyVerificationAcceptsLegacyAlgoraUserCommentWithClaimMarker() {
+    func testAlgoraOnlyVerificationRejectsLegacyAlgoraUserCommentWithClaimMarker() {
         let verification = BountyParsing.classifyAlgoraOnly(
             issue: Self.issue(body: "Plain issue text is not trusted."),
-            comments: [Self.comment(login: "algora-pbc", body: "💎 **amithm001** is offering a **$50** bounty for this issue. View and reward the bounty at `algora.io/amithmandassociates`. Claim the bounty by commenting `/claim #2` in your PR.")],
+            comments: [Self.comment(login: "algora-pbc", body: "💎 **amithm001** is offering a **$50** bounty for this issue. Claim the bounty by commenting `/claim #123` in your PR.")],
             repo: "org/repo",
-            claimEvidenceText: "@algora-pbc /claim #2"
+            claimEvidenceText: "@algora-pbc /claim #123",
+            claimPrsCount: 1
         )
-        XCTAssertEqual(verification.source, .algora)
-        XCTAssertTrue(verification.verified)
-        XCTAssertEqual(verification.amountUsd, 50)
-        XCTAssertTrue(verification.algoraBotSeen)
-        XCTAssertTrue(verification.claimFlowSeen)
+        XCTAssertEqual(verification.source, .notAlgora)
+        XCTAssertFalse(verification.verified)
+        XCTAssertFalse(verification.algoraBotSeen)
+        XCTAssertFalse(verification.amountSeen)
+        XCTAssertFalse(verification.claimFlowSeen)
+        XCTAssertEqual(verification.claimPrsCount, 1)
+        XCTAssertEqual(verification.excludedReason, "No algora-pbc[bot] comment found")
     }
 
     func testAlgoraOnlyVerificationRejectsOfficialAlgoraLabelEventsWithoutIssueComment() {
@@ -68,7 +72,7 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertEqual(verification.source, .notAlgora)
         XCTAssertFalse(verification.verified)
         XCTAssertFalse(verification.algoraBotSeen)
-        XCTAssertEqual(verification.excludedReason, "No algora-pbc issue comment found")
+        XCTAssertEqual(verification.excludedReason, "No algora-pbc[bot] comment found")
     }
 
     func testDiscoveryVerificationRequiresAlgoraBotIssueComment() {
@@ -80,13 +84,56 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertEqual(verification.source, .notAlgora)
         XCTAssertFalse(verification.verified)
         XCTAssertFalse(verification.algoraBotSeen)
-        XCTAssertEqual(verification.excludedReason, "No algora-pbc issue comment found")
+        XCTAssertEqual(verification.excludedReason, "No algora-pbc[bot] comment found")
+    }
+
+    func testAlgoraEvidenceHelperIgnoresLabelsAndIssueBody() {
+        XCTAssertFalse(BountyParsing.hasAlgoraEvidence(
+            labels: ["💎 Bounty", "$50"],
+            body: "algora-pbc $50 bounty /claim #123",
+            comments: []
+        ))
+        XCTAssertFalse(BountyParsing.hasAlgoraEvidence(
+            labels: [],
+            body: "Plain issue body",
+            comments: ["$50 bounty /claim #123"]
+        ))
+        XCTAssertTrue(BountyParsing.hasAlgoraEvidence(
+            labels: [],
+            body: "Plain issue body",
+            comments: ["algora-pbc[bot]\n$50 bounty\nStart working: /attempt #123\nSubmit work: /claim #123"]
+        ))
+    }
+
+    func testLibreChatClaimPRDoesNotProveAlgoraBounty() {
+        let verification = BountyParsing.classifyAlgoraOnly(
+            issue: Self.issue(
+                body: "Issue mentions bounty and someone opened a PR with /claim #7702.",
+                number: 7702,
+                htmlUrl: "https://github.com/danny-avila/LibreChat/issues/7702"
+            ),
+            comments: [
+                Self.comment(login: "maintainer", body: "A user may claim this manually, but no Algora bot is here."),
+                Self.comment(login: "contributor", body: "/claim #7702")
+            ],
+            repo: "danny-avila/LibreChat",
+            claimEvidenceText: "/claim #7702",
+            claimPrsCount: 1
+        )
+        XCTAssertEqual(verification.source, .notAlgora)
+        XCTAssertFalse(verification.verified)
+        XCTAssertFalse(verification.algoraBotSeen)
+        XCTAssertFalse(verification.amountSeen)
+        XCTAssertFalse(verification.claimFlowSeen)
+        XCTAssertEqual(verification.claimPrsCount, 1)
+        XCTAssertEqual(verification.excludedReason, "No algora-pbc[bot] comment found")
+        XCTAssertTrue(verification.evidence.isEmpty)
     }
 
     func testDiscoveryVerificationAcceptsAlgoraBotIssueComment() {
         let verification = BountyParsing.classifyAlgoraDiscoveryOnly(
             issue: Self.issue(body: "Plain issue text."),
-            comments: [Self.comment(login: "algora-pbc", type: "Bot", body: "$50 bounty\nSteps to solve\nStart working: /attempt #123\nSubmit work: /claim #123\nReward")],
+            comments: [Self.comment(login: "algora-pbc[bot]", type: "Bot", body: "$50 bounty\nSteps to solve\nStart working: /attempt #123\nSubmit work: /claim #123\nReward")],
             repo: "org/repo"
         )
         XCTAssertEqual(verification.source, .algora)
@@ -113,7 +160,7 @@ final class BountyParsingTests: XCTestCase {
             XCTAssertEqual(verification.source, .notAlgora, body)
             XCTAssertFalse(verification.verified, body)
             XCTAssertFalse(verification.algoraBotSeen, body)
-            XCTAssertEqual(verification.excludedReason, "No algora-pbc issue comment found", body)
+            XCTAssertEqual(verification.excludedReason, "No algora-pbc[bot] comment found", body)
         }
     }
 
@@ -127,6 +174,19 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertFalse(verification.verified)
         XCTAssertTrue(verification.algoraBotSeen)
         XCTAssertEqual(verification.excludedReason, "Algora bot found, but bounty amount or claim flow missing")
+    }
+
+    func testAlgoraBotNeedsBountyWordNearDollarAmount() {
+        let verification = BountyParsing.classifyAlgoraOnly(
+            issue: Self.issue(body: "Plain issue text."),
+            comments: [Self.comment(login: "algora-pbc[bot]", type: "Bot", body: "Algora mentions $50 and /attempt #123, but this is not a visible bounty amount.")],
+            repo: "org/repo"
+        )
+        XCTAssertEqual(verification.source, .notAlgora)
+        XCTAssertFalse(verification.verified)
+        XCTAssertTrue(verification.algoraBotSeen)
+        XCTAssertFalse(verification.amountSeen)
+        XCTAssertTrue(verification.claimFlowSeen)
     }
 
 
@@ -168,10 +228,10 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertEqual(BountyParsing.rewardLinks(in: "Reward: https://console.algora.io/org/repo/bounties/42"), ["https://console.algora.io/org/repo/bounties/42"])
     }
 
-    private static func issue(body: String, state: String = "open") -> GitHubIssueResponse {
+    private static func issue(body: String, state: String = "open", number: Int = 123, htmlUrl: String? = nil) -> GitHubIssueResponse {
         GitHubIssueResponse(
-            htmlUrl: "https://github.com/org/repo/issues/123",
-            number: 123,
+            htmlUrl: htmlUrl ?? "https://github.com/org/repo/issues/\(number)",
+            number: number,
             state: state,
             title: "Issue",
             body: body,
@@ -945,7 +1005,7 @@ final class AlgoraFallbackTests: XCTestCase {
                   {
                     "id": 1,
                     "body": "$50 bounty\\nSteps to solve\\nStart working: /attempt #123\\nSubmit work: /claim #123\\nReward",
-                    "user": {"login":"algora-pbc","type":"Bot"},
+                    "user": {"login":"algora-pbc[bot]","type":"Bot"},
                     "html_url":"https://github.com/org/repo/issues/123#issuecomment-1",
                     "created_at":"2026-05-22T04:00:00Z",
                     "updated_at":"2026-05-22T04:00:00Z"
@@ -979,7 +1039,7 @@ final class AlgoraFallbackTests: XCTestCase {
         XCTAssertTrue(result.bounties.first?.algoraEvidence.first == "Verified Algora bounty")
     }
 
-    func testDiscoverAcceptsLiveAlgoraPbcUserCommentShape() async {
+    func testDiscoverRejectsLiveAlgoraPbcUserCommentShapeWithoutBot() async {
         MockURLProtocol.handler = { request in
             switch request.url?.path {
             case "/search/issues":
@@ -1024,9 +1084,7 @@ final class AlgoraFallbackTests: XCTestCase {
             riskScoring: RiskScoringService()
         )
         let result = await service.discoverBounties(filters: DiscoverFilters(), githubToken: nil)
-        XCTAssertEqual(result.bounties.count, 1)
-        XCTAssertEqual(result.bounties.first?.amount, 50)
-        XCTAssertEqual(result.bounties.first?.competitionCount, 1)
+        XCTAssertTrue(result.bounties.isEmpty)
     }
 
     func testDiscoverContinuesWhenPublicAlgoraFails() async {
