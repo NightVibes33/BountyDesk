@@ -138,28 +138,51 @@ struct LoginView: View {
 }
 
 struct LoginHero: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ZStack {
-                Circle()
-                    .fill(.green.opacity(0.18))
-                    .frame(width: 76, height: 76)
-                Image(systemName: "target")
-                    .font(.system(size: 34, weight: .semibold))
-                    .foregroundStyle(.green)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 28) {
+                heroCopy
+                Spacer(minLength: 12)
+                OnboardingSignalGraphic(page: .signIn, reduceMotion: reduceMotion)
+                    .frame(width: 250, height: 250)
             }
-            VStack(alignment: .leading, spacing: 8) {
-                Text("BountyDesk")
-                    .font(.largeTitle.weight(.bold))
-                Text("Track Algora bounty PRs, claim status, checks, maintainer signals, and payout risk from GitHub.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 20) {
+                OnboardingSignalGraphic(page: .signIn, reduceMotion: reduceMotion)
+                    .frame(height: 240)
+                heroCopy
             }
         }
-        .padding(22)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .bountyGlassCard(cornerRadius: 8, interactive: true)
+    }
+
+    private var heroCopy: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("BountyDesk", systemImage: "target")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("Your Algora bounty desk, built from live GitHub evidence.")
+                .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                .lineLimit(3)
+                .minimumScaleFactor(0.72)
+            Text("Sign in once, then BountyDesk refreshes your claimed PRs, verified bounty issues, checks, competitors, and payout-risk signals.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { trustChips }
+                VStack(alignment: .leading, spacing: 8) { trustChips }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var trustChips: some View {
+        StatusChip(text: "Verified Algora", systemImage: "checkmark.seal", tint: .green)
+        StatusChip(text: "Live PR state", systemImage: "arrow.clockwise", tint: .blue)
+        StatusChip(text: "Competition", systemImage: "person.3", tint: .orange)
     }
 }
 

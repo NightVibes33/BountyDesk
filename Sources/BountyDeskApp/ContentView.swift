@@ -6,14 +6,19 @@ struct ContentView: View {
     @EnvironmentObject private var app: BountyTrackerViewModel
     @Query(sort: \WatchedOrg.handle) private var watchedOrgs: [WatchedOrg]
     @Query(sort: \Bounty.updatedAt, order: .reverse) private var bounties: [Bounty]
+    @AppStorage("hasCompletedFirstRunOnboarding") private var hasCompletedFirstRunOnboarding = false
     @State private var didRestore = false
 
     var body: some View {
         Group {
             if app.isAuthenticated {
                 MainTabs()
-            } else {
+            } else if hasCompletedFirstRunOnboarding {
                 LoginView()
+            } else {
+                BountyOnboardingView {
+                    hasCompletedFirstRunOnboarding = true
+                }
             }
         }
         .task {

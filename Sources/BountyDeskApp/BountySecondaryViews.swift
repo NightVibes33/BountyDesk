@@ -182,6 +182,7 @@ struct SettingsView: View {
     @AppStorage("notifyChecks") private var notifyChecks = true
     @AppStorage("notifyPayment") private var notifyPayment = true
     @AppStorage("defaultMinimumPayout") private var defaultMinimumPayout = 0
+    @AppStorage("hasCompletedFirstRunOnboarding") private var hasCompletedFirstRunOnboarding = false
 
     var body: some View {
         NavigationStack {
@@ -242,6 +243,15 @@ struct SettingsView: View {
                     Stepper(value: $defaultMinimumPayout, in: 0...25_000, step: 50) {
                         Text("Minimum \(dollars(defaultMinimumPayout))")
                     }
+                }
+
+                Section("Onboarding") {
+                    Button { hasCompletedFirstRunOnboarding = false } label: {
+                        Label("Replay First Run Onboarding", systemImage: "sparkle.magnifyingglass")
+                    }
+                    Text("The onboarding appears before GitHub setup on a signed-out launch.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Refresh") {
