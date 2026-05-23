@@ -38,6 +38,7 @@ final class BountyTrackerViewModel: ObservableObject {
 
     private var modelContext: ModelContext?
     private let keychain = KeychainStore()
+    private let pendingDeviceAuthorizationKey = "pendingGitHubDeviceAuthorization"
     private var service = BountyTrackerService()
     private var deviceFlow = GitHubDeviceFlowClient()
 
@@ -75,6 +76,7 @@ final class BountyTrackerViewModel: ObservableObject {
         isRestoringSession = true
         defer { isRestoringSession = false }
         do {
+            restorePendingGitHubDeviceAuthorization()
             let githubToken = try keychain.read(.githubToken)
             let algoraToken = try keychain.read(.algoraToken)
             hasGitHubToken = githubToken?.isEmpty == false
@@ -86,6 +88,8 @@ final class BountyTrackerViewModel: ObservableObject {
             let user = try await service.github.validateToken(githubToken)
             authenticatedLogin = user.login
             isAuthenticated = true
+            githubDeviceAuthorization = nil
+            clearPendingGitHubDeviceAuthorization()
             try upsertAccount(user: user, hasGitHubToken: true, hasAlgoraToken: hasAlgoraToken)
         } catch {
             isAuthenticated = false
@@ -110,6 +114,7 @@ final class BountyTrackerViewModel: ObservableObject {
         do {
             let authorization = try await deviceFlow.requestDeviceCode(includePrivateRepositories: includePrivateRepositories)
             githubDeviceAuthorization = authorization
+            savePendingGitHubDeviceAuthorization(authorization)
             syncMessage = "Open GitHub and enter code \(authorization.userCode). iOS can use your saved GitHub passkey there."
             return authorization.verificationURL
         } catch {
@@ -131,22 +136,68 @@ final class BountyTrackerViewModel: ObservableObject {
         do {
             let token = try await deviceFlow.pollForAccessToken(authorization: authorization)
             await authenticateWithGitHubToken(token.accessToken, successPrefix: "GitHub passkey login complete")
-            if isAuthenticated { githubDeviceAuthorization = nil }
+            if isAuthenticated {
+                githubDeviceAuthorization = nil
+                clearPendingGitHubDeviceAuthorization()
+            }
         } catch {
+            if shouldClearPendingAuthorization(after: error) {
+                githubDeviceAuthorization = nil
+                clearPendingGitHubDeviceAuthorization()
+            }
             authError = error.localizedDescription
         }
     }
 
     func resumeGitHubDeviceLoginIfNeeded() async {
+        if githubDeviceAuthorization == nil { restorePendingGitHubDeviceAuthorization() }
         guard githubDeviceAuthorization != nil, isAuthenticated == false else { return }
         await finishGitHubDeviceLogin()
     }
 
     func cancelGitHubDeviceLogin() {
         githubDeviceAuthorization = nil
+        clearPendingGitHubDeviceAuthorization()
         syncMessage = "GitHub passkey login canceled."
     }
 
+    private func savePendingGitHubDeviceAuthorization(_ authorization: GitHubDeviceAuthorization) {
+        do {
+            let data = try JSONEncoder().encode(authorization)
+            UserDefaults.standard.set(data, forKey: pendingDeviceAuthorizationKey)
+        } catch {
+            authError = error.localizedDescription
+        }
+    }
+
+    private func restorePendingGitHubDeviceAuthorization() {
+        guard githubDeviceAuthorization == nil else { return }
+        guard let data = UserDefaults.standard.data(forKey: pendingDeviceAuthorizationKey) else { return }
+        do {
+            let authorization = try JSONDecoder().decode(GitHubDeviceAuthorization.self, from: data)
+            guard authorization.isExpired == false else {
+                clearPendingGitHubDeviceAuthorization()
+                return
+            }
+            githubDeviceAuthorization = authorization
+        } catch {
+            clearPendingGitHubDeviceAuthorization()
+        }
+    }
+
+    private func clearPendingGitHubDeviceAuthorization() {
+        UserDefaults.standard.removeObject(forKey: pendingDeviceAuthorizationKey)
+    }
+
+    private func shouldClearPendingAuthorization(after error: Error) -> Bool {
+        guard let flowError = error as? GitHubDeviceFlowError else { return false }
+        switch flowError {
+        case .expired, .denied, .incorrectClientCredentials:
+            return true
+        case .invalidResponse, .authorizationFailed, .httpStatus:
+            return false
+        }
+    }
 
     private func authenticateWithGitHubToken(_ token: String, successPrefix: String) async {
         authError = nil
@@ -156,6 +207,8 @@ final class BountyTrackerViewModel: ObservableObject {
             hasGitHubToken = true
             isAuthenticated = true
             authenticatedLogin = user.login
+            githubDeviceAuthorization = nil
+            clearPendingGitHubDeviceAuthorization()
             try upsertAccount(user: user, hasGitHubToken: true, hasAlgoraToken: hasAlgoraToken)
             syncMessage = "\(successPrefix) as \(user.login)."
         } catch {
@@ -185,6 +238,8 @@ final class BountyTrackerViewModel: ObservableObject {
     func clearGitHubToken() {
         do {
             try keychain.delete(.githubToken)
+            clearPendingGitHubDeviceAuthorization()
+            githubDeviceAuthorization = nil
             hasGitHubToken = false
             isAuthenticated = false
             authenticatedLogin = nil

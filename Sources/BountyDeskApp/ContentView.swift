@@ -35,6 +35,7 @@ struct ContentView: View {
             didRestore = true
             app.configure(modelContext: modelContext)
             await app.restoreSession()
+            await app.resumeGitHubDeviceLoginIfNeeded()
         }
         .onChange(of: app.isAuthenticated) { _, isAuthenticated in
             guard isAuthenticated, bounties.isEmpty else { return }
@@ -231,9 +232,12 @@ private struct GitHubDeviceLoginPanel: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             } else {
-                Text("Approve in GitHub, then return here. If it does not finish immediately, check sign in manually.")
+                Text("Approve in GitHub, then return here. BountyDesk keeps this code until it expires.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            }
+            LabeledContent("Expires") {
+                Text(authorization.expiresAt, style: .relative)
             }
             HStack {
                 Button {

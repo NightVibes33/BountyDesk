@@ -687,6 +687,20 @@ final class GitHubDeviceFlowClientTests: XCTestCase {
         XCTAssertEqual(authorization.scopeDescription, "Public repositories")
     }
 
+    func testDeviceAuthorizationPersistsCreatedAtAndExpiry() throws {
+        let createdAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let authorization = GitHubDeviceAuthorization(
+            response: GitHubDeviceAuthorizationResponse(deviceCode: "device123", userCode: "ABCD-EFGH", verificationUri: "https://github.com/login/device", verificationUriComplete: nil, expiresIn: 900, interval: 5),
+            includePrivateRepositories: true,
+            createdAt: createdAt
+        )
+        let data = try JSONEncoder().encode(authorization)
+        let restored = try JSONDecoder().decode(GitHubDeviceAuthorization.self, from: data)
+        XCTAssertEqual(restored, authorization)
+        XCTAssertEqual(restored.expiresAt, createdAt.addingTimeInterval(900))
+        XCTAssertEqual(restored.scopeDescription, "Private and public repositories")
+    }
+
     func testDeviceFlowPollReturnsAccessTokenWithoutSecret() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/login/oauth/access_token")

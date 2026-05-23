@@ -28,9 +28,8 @@ struct GitHubDeviceFlowClient {
     }
 
     func pollForAccessToken(authorization: GitHubDeviceAuthorization) async throws -> GitHubDeviceAccessToken {
-        let deadline = Date().addingTimeInterval(TimeInterval(authorization.expiresIn))
         var waitSeconds = max(authorization.interval, 1)
-        while Date() < deadline {
+        while authorization.isExpired == false {
             let body = formBody([
                 "client_id": GitHubOAuthConfiguration.clientID,
                 "device_code": authorization.deviceCode,
@@ -89,7 +88,7 @@ struct GitHubDeviceFlowClient {
     }
 }
 
-struct GitHubDeviceAuthorization: Equatable {
+struct GitHubDeviceAuthorization: Codable, Equatable {
     let deviceCode: String
     let userCode: String
     let verificationUri: String
@@ -97,6 +96,7 @@ struct GitHubDeviceAuthorization: Equatable {
     let expiresIn: Int
     let interval: Int
     let includePrivateRepositories: Bool
+    let createdAt: Date
 
     var verificationURL: URL? {
         URL(string: verificationUriComplete ?? verificationUri)
@@ -106,7 +106,15 @@ struct GitHubDeviceAuthorization: Equatable {
         includePrivateRepositories ? "Private and public repositories" : "Public repositories"
     }
 
-    init(response: GitHubDeviceAuthorizationResponse, includePrivateRepositories: Bool) {
+    var expiresAt: Date {
+        createdAt.addingTimeInterval(TimeInterval(expiresIn))
+    }
+
+    var isExpired: Bool {
+        Date() >= expiresAt
+    }
+
+    init(response: GitHubDeviceAuthorizationResponse, includePrivateRepositories: Bool, createdAt: Date = Date()) {
         deviceCode = response.deviceCode
         userCode = response.userCode
         verificationUri = response.verificationUri
@@ -114,6 +122,7 @@ struct GitHubDeviceAuthorization: Equatable {
         expiresIn = response.expiresIn
         interval = response.interval
         self.includePrivateRepositories = includePrivateRepositories
+        self.createdAt = createdAt
     }
 }
 
