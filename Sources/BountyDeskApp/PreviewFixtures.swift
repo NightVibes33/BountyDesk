@@ -17,7 +17,7 @@ enum PreviewFixtures {
             pullRequestSummary: "Mock PR summary with verification steps and tests.",
             amount: 500,
             labels: ["Algora", "Bounty", "$500"],
-            algoraEvidence: ["Verified Algora bounty", "algora-pbc[bot] issue comment found", "$500 bounty", "Algora claim flow found"],
+            algoraEvidence: ["Verified Algora bounty", "Official Algora issue comment found", "$500 bounty", "Algora claim flow found"],
             rewardLinks: ["https://algora.io/example/repo/issues/42"],
             workflowStatus: .pendingReview,
             issueState: .open,

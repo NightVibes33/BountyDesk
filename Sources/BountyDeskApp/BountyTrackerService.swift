@@ -1,5 +1,7 @@
 import Foundation
 
+typealias BountyDebugSink = @MainActor @Sendable (String) -> Void
+
 struct BountyTrackerService {
     var github = GitHubClient()
     var algoraPublic = AlgoraPublicClient()
@@ -63,46 +65,67 @@ struct BountyTrackerService {
         return result
     }
 
-    func discoverBounties(filters: DiscoverFilters, githubToken: String?) async -> DiscoverResult {
+    func discoverBounties(filters: DiscoverFilters, githubToken: String?, debug: BountyDebugSink = { _ in }) async -> DiscoverResult {
         var result = DiscoverResult()
         let scopedSearch = filters.org.nilIfBlank != nil || filters.repo.nilIfBlank != nil || filters.language.nilIfBlank != nil
         let candidateLimit = scopedSearch ? 60 : 35
         let perPage = candidateLimit
 
+        await debug("GitHub search started with limit \(candidateLimit). Scope: \(scopedSearch ? "custom filters" : "global recent Algora candidates").")
         do {
             let items = try await github.searchOpenBountyIssues(token: githubToken, org: filters.org.nilIfBlank, repo: filters.repo.nilIfBlank, language: filters.language.nilIfBlank, perPage: perPage)
             let candidates = Array(items.prefix(candidateLimit))
             result.githubCandidateCount = items.count
             result.scannedCandidateCount += candidates.count
+            await debug("GitHub search returned \(items.count) candidate issue(s); checking \(candidates.count).")
             if items.count > candidateLimit {
                 result.limitedCandidateCount += items.count - candidateLimit
                 result.warnings.append("Search limited to the newest \(candidateLimit) GitHub candidates. Add an org or repo filter for a deeper search.")
+                await debug("GitHub candidate list was limited by \(items.count - candidateLimit) item(s).")
             }
-            let snapshots = await openIssueSnapshots(from: candidates, token: githubToken)
-            for snapshot in snapshots where filters.matches(snapshot: snapshot, commentCount: 0) {
-                result.bounties.append(snapshot)
+            let snapshots = await openIssueSnapshots(from: candidates, token: githubToken, debug: debug)
+            await debug("GitHub verification produced \(snapshots.count) verified issue(s) before UI filters.")
+            for snapshot in snapshots {
+                if filters.matches(snapshot: snapshot, commentCount: 0) {
+                    result.bounties.append(snapshot)
+                    let amountText = snapshot.amount > 0 ? "$\(snapshot.amount)" : "amount unknown"
+                    await debug("Shown: \(snapshot.repoOwner)/\(snapshot.repoName)#\(snapshot.issueNumber) \(amountText) with \(snapshot.openClaimPrs) open claim PR(s).")
+                } else {
+                    await debug("Filtered out: \(snapshot.repoOwner)/\(snapshot.repoName)#\(snapshot.issueNumber) after verification because current UI filters did not match.")
+                }
             }
         } catch {
             result.warnings.append("GitHub discovery failed: \(error.localizedDescription)")
+            await debug("GitHub discovery failed: \(error.localizedDescription).")
         }
 
         if let org = filters.org.nilIfBlank {
+            await debug("Public Algora lookup started for \(org).")
             do {
                 let algoraBounties = try await algoraPublic.bounties(org: org, limit: 100)
                 let algoraLimit = 60
                 let candidates = Array(algoraBounties.prefix(algoraLimit))
                 result.algoraCandidateCount = algoraBounties.count
                 result.scannedCandidateCount += candidates.count
+                await debug("Public Algora returned \(algoraBounties.count) candidate(s); verifying \(candidates.count) against live GitHub comments.")
                 if algoraBounties.count > algoraLimit {
                     result.limitedCandidateCount += algoraBounties.count - algoraLimit
                     result.warnings.append("Algora public discovery limited to the newest \(algoraLimit) bounties for \(org).")
+                    await debug("Public Algora candidate list was limited by \(algoraBounties.count - algoraLimit) item(s).")
                 }
                 let snapshots = await algoraSnapshots(from: candidates, source: .algoraPublic, githubToken: githubToken)
-                for snapshot in snapshots where filters.matches(snapshot: snapshot, commentCount: 0) {
-                    result.bounties.append(snapshot)
+                await debug("Public Algora verification produced \(snapshots.count) verified issue(s) before UI filters.")
+                for snapshot in snapshots {
+                    if filters.matches(snapshot: snapshot, commentCount: 0) {
+                        result.bounties.append(snapshot)
+                        await debug("Shown from Algora public data: \(snapshot.repoOwner)/\(snapshot.repoName)#\(snapshot.issueNumber).")
+                    } else {
+                        await debug("Filtered out Algora public result: \(snapshot.repoOwner)/\(snapshot.repoName)#\(snapshot.issueNumber).")
+                    }
                 }
             } catch {
                 result.warnings.append("Public Algora discovery failed for \(org): \(error.localizedDescription)")
+                await debug("Public Algora discovery failed for \(org): \(error.localizedDescription).")
             }
         }
 
@@ -110,20 +133,24 @@ struct BountyTrackerService {
         return result
     }
 
-    private func openIssueSnapshots(from items: [GitHubSearchItem], token: String?) async -> [TrackedBountySnapshot] {
+    private func openIssueSnapshots(from items: [GitHubSearchItem], token: String?, debug: BountyDebugSink = { _ in }) async -> [TrackedBountySnapshot] {
         var snapshots: [TrackedBountySnapshot] = []
         var index = 0
         while index < items.count {
             let end = Swift.min(index + 6, items.count)
             let batch = Array(items[index..<end])
-            await withTaskGroup(of: TrackedBountySnapshot?.self) { group in
+            await debug("Checking GitHub candidate batch \(index + 1)-\(end) of \(items.count).")
+            await withTaskGroup(of: DiscoveryCandidateResult.self) { group in
                 for item in batch {
                     group.addTask {
                         await openIssueSnapshot(from: item, token: token)
                     }
                 }
-                for await snapshot in group {
-                    if let snapshot {
+                for await candidate in group {
+                    for line in candidate.debugLines {
+                        await debug(line)
+                    }
+                    if let snapshot = candidate.snapshot {
                         snapshots.append(snapshot)
                     }
                 }
@@ -455,7 +482,7 @@ struct BountyTrackerService {
             contributingRulesFound: false,
             codeOfConductFound: false
         ))
-        return TrackedBountySnapshot(
+        let snapshot = TrackedBountySnapshot(
             stableID: "algora:\(owner)/\(repo)#\(number)",
             source: source,
             repoOwner: owner,
@@ -502,10 +529,14 @@ struct BountyTrackerService {
             updatedAt: updated,
             lastRefreshedAt: Date()
         )
+        return snapshot
     }
 
-    private func openIssueSnapshot(from item: GitHubSearchItem, token: String?) async -> TrackedBountySnapshot? {
-        guard let slug = GitHubClient.repositorySlug(from: item.repositoryUrl) else { return nil }
+    private func openIssueSnapshot(from item: GitHubSearchItem, token: String?) async -> DiscoveryCandidateResult {
+        guard let slug = GitHubClient.repositorySlug(from: item.repositoryUrl) else {
+            return DiscoveryCandidateResult(snapshot: nil, debugLines: ["Excluded candidate with invalid repository URL: \(item.htmlUrl)."])
+        }
+        var debugLines = ["Checking \(slug.owner)/\(slug.repo)#\(item.number): \(item.title.trimmedSummary(limit: 90))"]
         async let issueTask = github.issue(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
         async let issueCommentsTask = github.issueComments(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
         let issue = (try? await issueTask) ?? fallbackIssue(from: item, owner: slug.owner, repo: slug.repo, number: item.number)
@@ -516,13 +547,20 @@ struct BountyTrackerService {
             comments: issueComments,
             repo: repoSlug
         )
-        guard verification.verified else { return nil }
+        let officialCommentCount = BountyParsing.algoraBotComments(from: issueComments).count
+        debugLines.append("Fetched \(issueComments.count) issue comment(s) for \(repoSlug)#\(item.number); official Algora comment(s): \(officialCommentCount).")
+        guard verification.verified else {
+            debugLines.append("Excluded \(repoSlug)#\(item.number): \(verification.excludedReason ?? "not verified").")
+            return DiscoveryCandidateResult(snapshot: nil, debugLines: debugLines)
+        }
+        debugLines.append("Verified \(repoSlug)#\(item.number): amount \(verification.amountUsd.map { "$\($0)" } ?? "unknown"), claim flow \(verification.claimFlowSeen ? "seen" : "missing").")
 
         let labels = Array(Set((item.labels + issue.labels).map(\.name))).sorted()
         let algoraText = verification.evidence.joined(separator: "\n")
         let amount = verification.amountUsd ?? 0
         let claim = BountyParsing.paymentStatus(in: algoraText) ?? BountyParsing.claimStatus(in: algoraText) ?? .unknown
         let competition = await competitionReport(owner: slug.owner, repo: slug.repo, issueNumber: item.number, token: token, cachedIssue: issue, cachedIssueComments: issueComments)
+        debugLines.append("Competition for \(repoSlug)#\(item.number): \(competition.openClaimPrs) open claim PR(s), \(competition.mergedClaimPrs) merged, \(competition.rewardedClaims) reward signal(s).")
         let rewarded = verification.alreadyRewarded || claim == .paymentSucceeded || competition.rewardedClaims > 0
         let risk = riskScoring.score(RiskInput(
             pullRequestState: .unknown,
@@ -545,7 +583,7 @@ struct BountyTrackerService {
             contributingRulesFound: false,
             codeOfConductFound: false
         ))
-        return TrackedBountySnapshot(
+        let snapshot = TrackedBountySnapshot(
             stableID: "github-discover:\(slug.owner)/\(slug.repo)#\(item.number)",
             source: .github,
             repoOwner: slug.owner,
@@ -592,6 +630,7 @@ struct BountyTrackerService {
             updatedAt: maxDate(issue.updatedAt, item.updatedAt),
             lastRefreshedAt: Date()
         )
+        return DiscoveryCandidateResult(snapshot: snapshot, debugLines: debugLines)
     }
 
     private func manualSnapshot(owner: String, repo: String, issue: Int, pull: Int?, url: String) -> TrackedBountySnapshot {
@@ -676,7 +715,7 @@ struct BountyTrackerService {
         }
         let verification = BountyParsing.classifyAlgoraDiscoveryOnly(issue: issue, comments: issueComments, repo: repoSlug, lastCheckedAt: now)
         guard verification.verified else {
-            return .notAlgora(issue: issue, repo: repoSlug, reason: verification.excludedReason ?? "No algora-pbc[bot] comment found", verification: verification, lastCheckedAt: now)
+            return .notAlgora(issue: issue, repo: repoSlug, reason: verification.excludedReason ?? "No official Algora issue comment found", verification: verification, lastCheckedAt: now)
         }
 
         let attemptRows = BountyParsing.parseAlgoraAttemptTables(from: issueComments, issueNumber: issueNumber)
@@ -926,7 +965,7 @@ struct BountyTrackerService {
         hasMaintainerRejection: Bool,
         ourSummary: CompetitorSummary?
     ) -> (recommendation: BountyRecommendation, reasons: [String]) {
-        guard verified else { return (.notAlgora, ["No algora-pbc[bot] proof found"]) }
+        guard verified else { return (.notAlgora, ["No official Algora proof found"]) }
         var score = 0
         var reasons: [String] = ["Verified Algora bounty"]
         score += 40
@@ -1139,6 +1178,11 @@ struct TrackerRefreshResult {
     var claims: [ClaimSnapshot] = []
     var riskSnapshots: [RiskSnapshotData] = []
     var warnings: [String] = []
+}
+
+struct DiscoveryCandidateResult {
+    var snapshot: TrackedBountySnapshot?
+    var debugLines: [String]
 }
 
 struct DiscoverResult {

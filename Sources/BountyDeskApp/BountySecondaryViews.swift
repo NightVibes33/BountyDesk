@@ -36,7 +36,7 @@ struct DiscoverView: View {
                     Toggle("No paid/rewarded signal", isOn: $app.discoverFilters.noPaidSignal)
                     Toggle("Finishable today", isOn: $app.discoverFilters.finishableToday)
                     Label("Verified Algora only", systemImage: "checkmark.seal")
-                    Text("Search results require an algora-pbc[bot] issue comment with a visible bounty amount and claim or attempt flow.")
+                    Text("Search results require an official Algora issue comment with a visible bounty amount and claim or attempt flow.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Picker("Video", selection: $videoFilter) {
@@ -298,6 +298,32 @@ struct SettingsView: View {
                     } else {
                         Text("No refresh run yet.")
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Live Debug Log") {
+                    HStack {
+                        Label("\(app.debugLog.count) events", systemImage: "terminal")
+                        Spacer()
+                        Button("Clear") { app.clearDebugLog() }
+                            .disabled(app.debugLog.isEmpty)
+                    }
+                    if app.debugLog.isEmpty {
+                        Text("Run Search or Refresh to stream candidate checks, exclusion reasons, competition counts, and filter decisions here.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(app.debugLog.suffix(120))) { entry in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(entry.timestamp.formatted(date: .omitted, time: .standard))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Text(entry.message)
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                            }
+                            .padding(.vertical, 3)
+                        }
                     }
                 }
 
