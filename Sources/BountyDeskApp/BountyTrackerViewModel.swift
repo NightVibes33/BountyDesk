@@ -306,10 +306,12 @@ final class BountyTrackerViewModel: ObservableObject {
             } catch {
                 token = nil
             }
+            syncMessage = "Searching verified Algora bounty comments..."
             let result = await service.discoverBounties(filters: discoverFilters, githubToken: token)
             warnings = result.warnings
             discoveredBounties = result.bounties
-            syncMessage = "Found \(result.bounties.count) public bounty candidates."
+            let scanText = result.scannedCandidateCount > 0 ? " from \(result.scannedCandidateCount) checked candidates" : ""
+            syncMessage = "Found \(result.bounties.count) verified Algora bounties\(scanText)."
         }
     }
 

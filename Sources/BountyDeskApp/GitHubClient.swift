@@ -55,31 +55,54 @@ struct GitHubClient {
         if let org, org.isEmpty == false { qualifiers += " org:\(org)" }
         if let repo, repo.isEmpty == false { qualifiers += " repo:\(repo)" }
         if let language, language.isEmpty == false { qualifiers += " language:\(language)" }
-        let queries = [
-            "\(qualifiers) label:\"💎 Bounty\"",
-            "\(qualifiers) label:bounty algora",
-            "\(qualifiers) \"Total prize pool\"",
-            "\(qualifiers) /bounty",
-            "\(qualifiers) algora bounty"
-        ]
+
         var seen = Set<String>()
         var items: [GitHubSearchItem] = []
-        for query in queries {
-            let response = try await searchIssues(query: query, token: token, perPage: perPage)
+        var firstError: Error?
+
+        do {
+            let primary = try await searchIssues(query: "\(qualifiers) commenter:algora-pbc", token: token, perPage: perPage)
+            for item in primary.items where item.pullRequest == nil && seen.insert(item.htmlUrl).inserted {
+                items.append(item)
+            }
+            if items.isEmpty == false {
+                return items.sorted { $0.updatedAt > $1.updatedAt }
+            }
+        } catch {
+            firstError = error
+        }
+
+        let fallbackQueries = [
+            "\(qualifiers) label:\"💎 Bounty\" algora",
+            "\(qualifiers) \"algora.io\" bounty",
+            "\(qualifiers) \"Total prize pool\" algora",
+            "\(qualifiers) /bounty algora"
+        ]
+        for query in fallbackQueries {
+            let response: GitHubSearchResponse
+            do {
+                response = try await searchIssues(query: query, token: token, perPage: perPage)
+            } catch {
+                if firstError == nil { firstError = error }
+                continue
+            }
             for item in response.items where item.pullRequest == nil && seen.insert(item.htmlUrl).inserted {
                 items.append(item)
             }
         }
+        if items.isEmpty, let firstError {
+            throw firstError
+        }
         return items.sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    func searchBountyWorkPullRequests(owner: String, repo: String, issueNumber: Int, token: String?, perPage: Int = 50) async throws -> [GitHubSearchItem] {
-        let repoQualifier = "repo:\(owner)/\(repo) is:pr"
+    func searchBountyWorkPullRequests(owner: String, repo: String, issueNumber: Int, token: String?, perPage: Int = 50, state: String? = nil) async throws -> [GitHubSearchItem] {
+        let stateQualifier = state.map { " state:\($0)" } ?? ""
+        let repoQualifier = "repo:\(owner)/\(repo) is:pr\(stateQualifier)"
         let queries = [
             "\(repoQualifier) #\(issueNumber)",
             "\(repoQualifier) \"/claim #\(issueNumber)\" in:body,comments",
-            "\(repoQualifier) \"/attempt #\(issueNumber)\" in:body,comments",
-            "\(repoQualifier) \"bounty claim\" #\(issueNumber)"
+            "\(repoQualifier) \"/attempt #\(issueNumber)\" in:body,comments"
         ]
         return try await searchPullRequests(queries: queries, token: token, perPage: perPage)
     }

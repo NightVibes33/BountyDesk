@@ -321,6 +321,82 @@ final class GitHubClientTests: XCTestCase {
         XCTAssertEqual(user.login, "tester")
     }
 
+    func testOpenBountyIssueSearchReturnsAfterAlgoraCommenterResults() async throws {
+        var queries: [String] = []
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/search/issues")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+            queries.append(query)
+            if query.contains("label:\"💎 Bounty\"") {
+                let data = #"{"message":"Validation Failed"}"#.data(using: .utf8)!
+                return (HTTPURLResponse(url: request.url!, statusCode: 422, httpVersion: nil, headerFields: nil)!, data)
+            }
+            let items = query.contains("commenter:algora-pbc") ? """
+                [{
+                  "url": "https://api.github.com/repos/org/repo/issues/123",
+                  "repository_url": "https://api.github.com/repos/org/repo",
+                  "html_url": "https://github.com/org/repo/issues/123",
+                  "number": 123,
+                  "title": "Verified bounty",
+                  "body": "Algora issue",
+                  "state": "open",
+                  "labels": [{"name":"💎 Bounty"}],
+                  "user": {"login":"maintainer","avatar_url":null,"html_url":"https://github.com/maintainer","type":"User"},
+                  "comments": 1,
+                  "updated_at": "2026-05-22T04:00:00Z",
+                  "created_at": "2026-05-22T03:00:00Z"
+                }]
+                """ : "[]"
+            let json = """
+            {"total_count":1,"incomplete_results":false,"items":\(items)}
+            """.data(using: .utf8)!
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+        }
+        let items = try await GitHubClient(session: Self.mockSession()).searchOpenBountyIssues(token: nil, perPage: 20)
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].number, 123)
+        XCTAssertEqual(queries.first?.contains("commenter:algora-pbc"), true)
+        XCTAssertEqual(queries.count, 1)
+    }
+
+    func testOpenBountyIssueSearchFallsBackWhenCommenterQueryFails() async throws {
+        var queries: [String] = []
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/search/issues")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value ?? ""
+            queries.append(query)
+            if query.contains("commenter:algora-pbc") {
+                let data = #"{"message":"Validation Failed"}"#.data(using: .utf8)!
+                return (HTTPURLResponse(url: request.url!, statusCode: 422, httpVersion: nil, headerFields: nil)!, data)
+            }
+            let items = query.contains("\"algora.io\" bounty") ? """
+                [{
+                  "url": "https://api.github.com/repos/org/repo/issues/124",
+                  "repository_url": "https://api.github.com/repos/org/repo",
+                  "html_url": "https://github.com/org/repo/issues/124",
+                  "number": 124,
+                  "title": "Fallback bounty",
+                  "body": "Algora issue",
+                  "state": "open",
+                  "labels": [{"name":"💎 Bounty"}],
+                  "user": {"login":"maintainer","avatar_url":null,"html_url":"https://github.com/maintainer","type":"User"},
+                  "comments": 1,
+                  "updated_at": "2026-05-22T04:00:00Z",
+                  "created_at": "2026-05-22T03:00:00Z"
+                }]
+                """ : "[]"
+            let json = """
+            {"total_count":1,"incomplete_results":false,"items":\(items)}
+            """.data(using: .utf8)!
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+        }
+        let items = try await GitHubClient(session: Self.mockSession()).searchOpenBountyIssues(token: nil, perPage: 20)
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].number, 124)
+        XCTAssertEqual(queries.first?.contains("commenter:algora-pbc"), true)
+        XCTAssertTrue(queries.contains { $0.contains("\"algora.io\" bounty") })
+    }
+
     func testPRSearchParsingAndDeduping() async throws {
         MockURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/search/issues")

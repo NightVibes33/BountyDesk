@@ -65,13 +65,22 @@ struct BountyTrackerService {
 
     func discoverBounties(filters: DiscoverFilters, githubToken: String?) async -> DiscoverResult {
         var result = DiscoverResult()
+        let scopedSearch = filters.org.nilIfBlank != nil || filters.repo.nilIfBlank != nil || filters.language.nilIfBlank != nil
+        let candidateLimit = scopedSearch ? 60 : 35
+        let perPage = candidateLimit
+
         do {
-            let items = try await github.searchOpenBountyIssues(token: githubToken, org: filters.org.nilIfBlank, repo: filters.repo.nilIfBlank, language: filters.language.nilIfBlank, perPage: 50)
-            for item in items {
-                guard let snapshot = await openIssueSnapshot(from: item, token: githubToken) else { continue }
-                if filters.matches(snapshot: snapshot, commentCount: item.comments ?? 0) {
-                    result.bounties.append(snapshot)
-                }
+            let items = try await github.searchOpenBountyIssues(token: githubToken, org: filters.org.nilIfBlank, repo: filters.repo.nilIfBlank, language: filters.language.nilIfBlank, perPage: perPage)
+            let candidates = Array(items.prefix(candidateLimit))
+            result.githubCandidateCount = items.count
+            result.scannedCandidateCount += candidates.count
+            if items.count > candidateLimit {
+                result.limitedCandidateCount += items.count - candidateLimit
+                result.warnings.append("Search limited to the newest \(candidateLimit) GitHub candidates. Add an org or repo filter for a deeper search.")
+            }
+            let snapshots = await openIssueSnapshots(from: candidates, token: githubToken)
+            for snapshot in snapshots where filters.matches(snapshot: snapshot, commentCount: 0) {
+                result.bounties.append(snapshot)
             }
         } catch {
             result.warnings.append("GitHub discovery failed: \(error.localizedDescription)")
@@ -80,11 +89,17 @@ struct BountyTrackerService {
         if let org = filters.org.nilIfBlank {
             do {
                 let algoraBounties = try await algoraPublic.bounties(org: org, limit: 100)
-                for dto in algoraBounties {
-                    guard let snapshot = await algoraSnapshot(from: dto, source: .algoraPublic, githubToken: githubToken) else { continue }
-                    if filters.matches(snapshot: snapshot, commentCount: 0) {
-                        result.bounties.append(snapshot)
-                    }
+                let algoraLimit = 60
+                let candidates = Array(algoraBounties.prefix(algoraLimit))
+                result.algoraCandidateCount = algoraBounties.count
+                result.scannedCandidateCount += candidates.count
+                if algoraBounties.count > algoraLimit {
+                    result.limitedCandidateCount += algoraBounties.count - algoraLimit
+                    result.warnings.append("Algora public discovery limited to the newest \(algoraLimit) bounties for \(org).")
+                }
+                let snapshots = await algoraSnapshots(from: candidates, source: .algoraPublic, githubToken: githubToken)
+                for snapshot in snapshots where filters.matches(snapshot: snapshot, commentCount: 0) {
+                    result.bounties.append(snapshot)
                 }
             } catch {
                 result.warnings.append("Public Algora discovery failed for \(org): \(error.localizedDescription)")
@@ -93,6 +108,52 @@ struct BountyTrackerService {
 
         result.bounties = dedupe(result.bounties, by: \.stableID).sorted { $0.updatedAt > $1.updatedAt }
         return result
+    }
+
+    private func openIssueSnapshots(from items: [GitHubSearchItem], token: String?) async -> [TrackedBountySnapshot] {
+        var snapshots: [TrackedBountySnapshot] = []
+        var index = 0
+        while index < items.count {
+            let end = Swift.min(index + 6, items.count)
+            let batch = Array(items[index..<end])
+            await withTaskGroup(of: TrackedBountySnapshot?.self) { group in
+                for item in batch {
+                    group.addTask {
+                        await openIssueSnapshot(from: item, token: token)
+                    }
+                }
+                for await snapshot in group {
+                    if let snapshot {
+                        snapshots.append(snapshot)
+                    }
+                }
+            }
+            index = end
+        }
+        return snapshots
+    }
+
+    private func algoraSnapshots(from dtos: [AlgoraBountyDTO], source: BountySource, githubToken: String?) async -> [TrackedBountySnapshot] {
+        var snapshots: [TrackedBountySnapshot] = []
+        var index = 0
+        while index < dtos.count {
+            let end = Swift.min(index + 6, dtos.count)
+            let batch = Array(dtos[index..<end])
+            await withTaskGroup(of: TrackedBountySnapshot?.self) { group in
+                for dto in batch {
+                    group.addTask {
+                        await algoraSnapshot(from: dto, source: source, githubToken: githubToken)
+                    }
+                }
+                for await snapshot in group {
+                    if let snapshot {
+                        snapshots.append(snapshot)
+                    }
+                }
+            }
+            index = end
+        }
+        return snapshots
     }
 
     func manualSnapshot(from text: String) -> TrackedBountySnapshot? {
@@ -552,7 +613,7 @@ struct BountyTrackerService {
     }
 
     private func bountyWorkPullRequestCount(owner: String, repo: String, issueNumber: Int, excludingPullRequest: Int? = nil, token: String?) async -> Int {
-        let items = (try? await github.searchBountyWorkPullRequests(owner: owner, repo: repo, issueNumber: issueNumber, token: token)) ?? []
+        let items = (try? await github.searchBountyWorkPullRequests(owner: owner, repo: repo, issueNumber: issueNumber, token: token, perPage: 25, state: "open")) ?? []
         return items.filter { item in
             item.state.lowercased() == "open" && item.number != excludingPullRequest
         }.count
@@ -717,6 +778,10 @@ struct TrackerRefreshResult {
 
 struct DiscoverResult {
     var bounties: [TrackedBountySnapshot] = []
+    var scannedCandidateCount = 0
+    var githubCandidateCount = 0
+    var algoraCandidateCount = 0
+    var limitedCandidateCount = 0
     var warnings: [String] = []
 }
 
