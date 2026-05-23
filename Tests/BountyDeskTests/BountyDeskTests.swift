@@ -80,7 +80,7 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertEqual(verification.source, .notAlgora)
         XCTAssertFalse(verification.verified)
         XCTAssertFalse(verification.algoraBotSeen)
-        XCTAssertEqual(verification.excludedReason, "No algora-pbc[bot] issue comment found")
+        XCTAssertEqual(verification.excludedReason, "No algora-pbc issue comment found")
     }
 
     func testDiscoveryVerificationAcceptsAlgoraBotIssueComment() {
@@ -888,7 +888,7 @@ final class AlgoraFallbackTests: XCTestCase {
                 [
                   {
                     "id": 1,
-                    "body": "💎 **org** is offering a **$50** bounty for this issue. View and reward the bounty at `algora.io/org/repo/issues/123`\n\nGot a pull request resolving this? Claim the bounty by commenting `/claim #123` in your PR.",
+                    "body": "💎 **org** is offering a **$50** bounty for this issue. View and reward the bounty at `algora.io/org/repo/issues/123`\\n\\nGot a pull request resolving this? Claim the bounty by commenting `/claim #123` in your PR.",
                     "user": {"login":"algora-pbc","type":"User"},
                     "html_url":"https://github.com/org/repo/issues/123#issuecomment-1",
                     "created_at":"2026-05-22T04:00:00Z",
