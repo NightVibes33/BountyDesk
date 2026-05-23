@@ -58,11 +58,17 @@ struct BountySectionHeader: View {
 extension View {
     @ViewBuilder
     func bountyGlassCard(cornerRadius: CGFloat = 8, interactive: Bool = false) -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.tint(.white.opacity(0.08)).interactive(interactive), in: .rect(cornerRadius: cornerRadius))
-        } else {
-            self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        }
+        self.glassEffect(.regular.tint(.white.opacity(0.08)).interactive(interactive), in: .rect(cornerRadius: cornerRadius))
+    }
+
+    func bountyContentCard(cornerRadius: CGFloat = 8) -> some View {
+        self
+            .background(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.86), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(.secondary.opacity(0.12), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.035), radius: 10, y: 4)
     }
 }
 

@@ -34,22 +34,3 @@ struct ContentView: View {
         }
     }
 }
-
-private struct MainTabs: View {
-    var body: some View {
-        TabView {
-            TodayView()
-                .tabItem { Label("Today", systemImage: "calendar.badge.clock") }
-            DashboardView()
-                .tabItem { Label("Dashboard", systemImage: "rectangle.grid.2x2") }
-            BountyListView()
-                .tabItem { Label("Bounties", systemImage: "tray.full") }
-            DiscoverView()
-                .tabItem { Label("Discover", systemImage: "magnifyingglass") }
-            AlertsView()
-                .tabItem { Label("Alerts", systemImage: "bell") }
-            SettingsView()
-                .tabItem { Label("Settings", systemImage: "gearshape") }
-        }
-    }
-}

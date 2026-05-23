@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct BountyListView: View {
+    var openSettings: () -> Void = {}
     @EnvironmentObject private var app: BountyTrackerViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(sort: \WatchedOrg.handle) private var watchedOrgs: [WatchedOrg]
@@ -97,10 +98,11 @@ struct BountyListView: View {
             .navigationTitle("Bounty Queue")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
+                    SettingsToolbarButton(action: openSettings)
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { isAdding = true } label: { Image(systemName: "plus") }
                         .accessibilityLabel("Import bounty URL")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
                     Button { Task { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) } } label: {
                         Image(systemName: "arrow.clockwise")
                             .symbolEffect(.bounce, value: app.isRefreshing)
@@ -156,7 +158,7 @@ struct BountyListView: View {
                 .font(.subheadline)
         }
         .padding(14)
-        .bountyGlassCard(cornerRadius: 8, interactive: true)
+        .bountyContentCard(cornerRadius: 8)
     }
 
     private var filteredBounties: [Bounty] {
@@ -247,7 +249,7 @@ struct BountyManagementPanel: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
-        .bountyGlassCard(cornerRadius: 8, interactive: true)
+        .bountyContentCard(cornerRadius: 8)
     }
 }
 

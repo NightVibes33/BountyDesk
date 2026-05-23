@@ -15,9 +15,9 @@ This build is no longer a seeded/sample tracker. It starts from real user data: 
 - Authenticated Algora client for `/api/bounties`, `/api/claims`, `/api/orgs/{org}/bounties`, and `/api/orgs/{org}/claims` when a token exists.
 - Current bounty tracker with payout, evidence, PR status, issue status, claim status, checks, competition, maintainer/bot comments, risk score, and next action.
 - Competition view with ethical improvement suggestions only.
-- Discover tab with org, repo, language, payout, competition, active/paid/video/assignment filters.
+- Search tab with org, repo, language, payout, competition, active/paid/video/assignment filters for verified Algora bounties.
 - Alerts tab for refresh-detected status, check, maintainer, bot, claim, and payout changes.
-- Settings for token management, watched orgs, refresh interval, in-app alert preferences, exports, and cache clearing.
+- Settings from the toolbar for token management, watched orgs, refresh interval, in-app alert preferences, exports, and cache clearing.
 - Debug/test mock fixtures are kept out of production startup data.
 
 ## Token Setup

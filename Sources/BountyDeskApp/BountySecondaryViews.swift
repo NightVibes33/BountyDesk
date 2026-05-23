@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct DiscoverView: View {
+    var openSettings: () -> Void = {}
     @EnvironmentObject private var app: BountyTrackerViewModel
     @Query(sort: \Bounty.updatedAt, order: .reverse) private var trackedBounties: [Bounty]
     @AppStorage("defaultMinimumPayout") private var defaultMinimumPayout = 0
@@ -52,14 +53,14 @@ struct DiscoverView: View {
                         app.discoverFilters.assignmentRequired = assignmentFilter.value
                         Task { await app.discover() }
                     } label: {
-                        Label(app.isDiscovering ? "Searching" : "Search Bounties", systemImage: "magnifyingglass")
+                        Label(app.isDiscovering ? "Searching" : "Search Verified Bounties", systemImage: "magnifyingglass")
                     }
                     .disabled(app.isDiscovering)
                 }
 
                 Section("Results") {
                     if app.discoveredBounties.isEmpty {
-                        ContentUnavailableView("No Results", systemImage: "magnifyingglass", description: Text("Search public GitHub/Algora data for new bounties."))
+                        ContentUnavailableView("No Verified Bounties", systemImage: "magnifyingglass", description: Text("Search live GitHub issue comments for Algora-hosted bounties with amount and claim flow."))
                     } else {
                         ForEach(app.discoveredBounties, id: \.stableID) { bounty in
                             let isTracked = trackedIDs.contains(bounty.stableID)
@@ -81,7 +82,12 @@ struct DiscoverView: View {
                 .scrollContentBackground(.hidden)
                 .refreshable { await app.discover() }
             }
-            .navigationTitle("Discover")
+            .navigationTitle("Search")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    SettingsToolbarButton(action: openSettings)
+                }
+            }
             .onAppear {
                 guard didApplyDefaultMinimumPayout == false else { return }
                 didApplyDefaultMinimumPayout = true
@@ -98,6 +104,7 @@ struct DiscoverView: View {
 }
 
 struct AlertsView: View {
+    var openSettings: () -> Void = {}
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var app: BountyTrackerViewModel
     @Query(sort: \AlertEvent.createdAt, order: .reverse) private var alerts: [AlertEvent]
@@ -149,6 +156,9 @@ struct AlertsView: View {
             }
             .navigationTitle("Alerts")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    SettingsToolbarButton(action: openSettings)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button { app.markAllAlertsRead() } label: {
@@ -168,6 +178,7 @@ struct AlertsView: View {
 }
 
 struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var app: BountyTrackerViewModel
     @Query(sort: \UserAccount.updatedAt, order: .reverse) private var accounts: [UserAccount]
@@ -311,6 +322,11 @@ struct SettingsView: View {
                 .scrollContentBackground(.hidden)
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 

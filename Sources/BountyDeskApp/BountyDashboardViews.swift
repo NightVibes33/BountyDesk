@@ -92,7 +92,7 @@ struct DashboardView: View {
                                     }
                                     .padding(14)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .bountyGlassCard(cornerRadius: 8)
+                                    .bountyContentCard(cornerRadius: 8)
                                 }
                             }
                         }
@@ -236,6 +236,6 @@ struct EmptyStatePanel: View {
         ContentUnavailableView(title, systemImage: systemImage, description: Text(message))
             .frame(maxWidth: .infinity)
             .padding(12)
-            .bountyGlassCard(cornerRadius: 8)
+            .bountyContentCard(cornerRadius: 8)
     }
 }

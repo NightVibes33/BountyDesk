@@ -44,7 +44,7 @@ struct ManagementStageBoard: View {
             }
         }
         .padding(14)
-        .bountyGlassCard(cornerRadius: 8, interactive: true)
+        .bountyContentCard(cornerRadius: 8)
     }
 
     private func stageValue(_ values: [Bounty]) -> String {

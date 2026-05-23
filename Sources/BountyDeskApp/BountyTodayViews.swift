@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct TodayView: View {
+    var openSettings: () -> Void = {}
     @EnvironmentObject private var app: BountyTrackerViewModel
     @Query(sort: \WatchedOrg.handle) private var watchedOrgs: [WatchedOrg]
     @Query(sort: \Bounty.updatedAt, order: .reverse) private var bounties: [Bounty]
@@ -75,6 +76,9 @@ struct TodayView: View {
             .navigationTitle("Today")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    SettingsToolbarButton(action: openSettings)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task { await app.refreshCurrentBounties(watchedOrgs: watchedOrgs) }
@@ -233,6 +237,6 @@ struct AlertCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .bountyGlassCard(cornerRadius: 8, interactive: true)
+        .bountyContentCard(cornerRadius: 8)
     }
 }

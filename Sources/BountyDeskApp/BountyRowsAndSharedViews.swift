@@ -9,66 +9,74 @@ struct BountyRow: View {
     let bounty: Bounty
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        if bounty.isPinned {
+                            Image(systemName: "star.fill")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.yellow)
+                                .accessibilityLabel("Pinned")
+                        }
+                        Text(bounty.issueSlug)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                     Text(bounty.title)
                         .font(.headline.weight(.semibold))
                         .lineLimit(2)
-                    Text(bounty.issueSlug)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 5) {
-                    if bounty.isPinned {
-                        Image(systemName: "star.fill")
-                            .foregroundStyle(.yellow)
-                            .accessibilityLabel("Pinned")
-                    }
-                    Text(bounty.payoutText)
-                        .font(.headline.monospacedDigit().weight(.bold))
-                        .foregroundStyle(.green)
-                        .contentTransition(.numericText())
-                }
+                Spacer(minLength: 10)
+                Text(bounty.payoutText)
+                    .font(.title3.monospacedDigit().weight(.bold))
+                    .foregroundStyle(.green)
+                    .contentTransition(.numericText())
+                    .minimumScaleFactor(0.7)
             }
 
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { managementChips }
-                VStack(alignment: .leading, spacing: 6) { managementChips }
-            }
-
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { statusChips }
-                VStack(alignment: .leading, spacing: 6) { statusChips }
-            }
-            BountyProgressRail(level: bounty.riskLevel, chance: bounty.payoutChance)
             Text(bounty.nextAction)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 7) { primarySignals }
+                VStack(alignment: .leading, spacing: 6) { primarySignals }
+            }
+
+            BountyProgressRail(level: bounty.riskLevel, chance: bounty.payoutChance)
+
             if bounty.userTags.isEmpty == false || bounty.userNotes.isEmpty == false || bounty.followUpAt != nil {
-                VStack(alignment: .leading, spacing: 6) {
-                    if bounty.userTags.isEmpty == false {
-                        TagCloud(tags: Array(bounty.userTags.prefix(4)))
-                    }
-                    Text(bounty.managementSummary)
-                        .font(.caption)
-                        .foregroundStyle(bounty.isFollowUpDue ? Color.red : Color.secondary)
-                        .lineLimit(1)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) { managementSignals }
+                    VStack(alignment: .leading, spacing: 6) { managementSignals }
                 }
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .bountyGlassCard(cornerRadius: 8, interactive: true)
+        .bountyContentCard(cornerRadius: 8)
         .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
-    private var managementChips: some View {
+    private var primarySignals: some View {
         StageChip(stage: bounty.managementStage)
+        StatusChip(text: bounty.workflowStatus.rawValue, systemImage: bounty.workflowStatus.systemImage, tint: bounty.workflowStatus.tint)
+        RiskChip(level: bounty.riskLevel)
+        if bounty.competitionCount > 0 {
+            StatusChip(text: workPullRequestText(bounty.competitionCount), systemImage: "person.3", tint: bounty.competitionLevel.tint)
+        }
+        if bounty.recommendation == .notWorthIt || bounty.recommendation == .alreadyRewardedOrSaturated {
+            StatusChip(text: "Do Not Pursue", systemImage: "hand.raised", tint: .red)
+        }
+    }
+
+    @ViewBuilder
+    private var managementSignals: some View {
         PriorityChip(priority: bounty.userPriority)
+        StatusChip(text: bounty.checkState.rawValue, systemImage: bounty.checkState.systemImage, tint: bounty.checkState.tint)
         if let followUpAt = bounty.followUpAt {
             StatusChip(
                 text: bounty.isFollowUpDue ? "Follow-up due" : followUpAt.formatted(date: .abbreviated, time: .omitted),
@@ -76,21 +84,11 @@ struct BountyRow: View {
                 tint: bounty.isFollowUpDue ? .red : .secondary
             )
         }
-    }
-
-    @ViewBuilder
-    private var statusChips: some View {
-        StatusChip(text: bounty.workflowStatus.rawValue, systemImage: bounty.workflowStatus.systemImage, tint: bounty.workflowStatus.tint)
-        StatusChip(text: bounty.checkState.rawValue, systemImage: bounty.checkState.systemImage, tint: bounty.checkState.tint)
-        RiskChip(level: bounty.riskLevel)
-        if bounty.competitionCount > 0 {
-            StatusChip(text: workPullRequestText(bounty.competitionCount), systemImage: "person.3", tint: bounty.competitionLevel.tint)
-        }
         if bounty.rewardedClaims > 0 {
-            StatusChip(text: "Reward Links Seen: \(bounty.rewardedClaims)", systemImage: "banknote", tint: .purple)
+            StatusChip(text: "Reward Links: \(bounty.rewardedClaims)", systemImage: "banknote", tint: .purple)
         }
-        if bounty.recommendation == .notWorthIt || bounty.recommendation == .alreadyRewardedOrSaturated {
-            StatusChip(text: "Do Not Pursue", systemImage: "hand.raised", tint: .red)
+        if bounty.userTags.isEmpty == false {
+            TagCloud(tags: Array(bounty.userTags.prefix(3)))
         }
     }
 }
@@ -106,15 +104,9 @@ struct BountyCompactRow: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(bounty.issueSlug).font(.subheadline.weight(.semibold))
                     Text(bounty.title).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
-                    HStack(spacing: 6) {
-                        StageChip(stage: bounty.managementStage)
-                        PriorityChip(priority: bounty.userPriority)
-                        if bounty.competitionCount > 0 {
-                            StatusChip(text: workPullRequestText(bounty.competitionCount), systemImage: "person.3", tint: bounty.competitionLevel.tint)
-                        }
-                        if bounty.recommendation == .notWorthIt || bounty.recommendation == .alreadyRewardedOrSaturated {
-                            StatusChip(text: "Do Not Pursue", systemImage: "hand.raised", tint: .red)
-                        }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) { compactSignals }
+                        VStack(alignment: .leading, spacing: 5) { compactSignals }
                     }
                 }
                 Spacer(minLength: 8)
@@ -128,9 +120,21 @@ struct BountyCompactRow: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .bountyGlassCard(cornerRadius: 8, interactive: true)
+            .bountyContentCard(cornerRadius: 8)
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var compactSignals: some View {
+        StageChip(stage: bounty.managementStage)
+        PriorityChip(priority: bounty.userPriority)
+        if bounty.competitionCount > 0 {
+            StatusChip(text: workPullRequestText(bounty.competitionCount), systemImage: "person.3", tint: bounty.competitionLevel.tint)
+        }
+        if bounty.recommendation == .notWorthIt || bounty.recommendation == .alreadyRewardedOrSaturated {
+            StatusChip(text: "Do Not Pursue", systemImage: "hand.raised", tint: .red)
+        }
     }
 }
 
@@ -152,16 +156,22 @@ struct BountySnapshotRow: View {
                     .foregroundStyle(.green)
                     .contentTransition(.numericText())
             }
-            HStack {
-                StatusChip(text: "Verified Algora", systemImage: "checkmark.seal", tint: .green)
-                RiskChip(level: snapshot.riskLevel)
-                StatusChip(text: workPullRequestText(snapshot.competitionCount), systemImage: "person.3", tint: snapshot.competitionCount > 0 ? snapshot.competitionLevel.tint : .secondary)
-                StatusChip(text: snapshot.recommendation.label, systemImage: snapshot.recommendation.systemImage, tint: snapshot.recommendation.tint)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) { snapshotSignals }
+                VStack(alignment: .leading, spacing: 5) { snapshotSignals }
             }
             Text(snapshot.nextAction).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
         }
         .padding(14)
-        .bountyGlassCard(cornerRadius: 8)
+        .bountyContentCard(cornerRadius: 8)
+    }
+
+    @ViewBuilder
+    private var snapshotSignals: some View {
+        StatusChip(text: "Verified Algora", systemImage: "checkmark.seal", tint: .green)
+        RiskChip(level: snapshot.riskLevel)
+        StatusChip(text: workPullRequestText(snapshot.competitionCount), systemImage: "person.3", tint: snapshot.competitionCount > 0 ? snapshot.competitionLevel.tint : .secondary)
+        StatusChip(text: snapshot.recommendation.label, systemImage: snapshot.recommendation.systemImage, tint: snapshot.recommendation.tint)
     }
 }
 
@@ -193,7 +203,7 @@ struct ActionRow: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .bountyGlassCard(cornerRadius: 8, interactive: true)
+        .bountyContentCard(cornerRadius: 8)
     }
 }
 
@@ -228,7 +238,7 @@ struct MetricTile: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .bountyGlassCard(cornerRadius: 8, interactive: true)
+        .bountyContentCard(cornerRadius: 8)
         .accessibilityElement(children: .combine)
     }
 }
@@ -249,7 +259,7 @@ struct SyncBanner: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .bountyGlassCard(cornerRadius: 8, interactive: true)
+        .bountyContentCard(cornerRadius: 8)
     }
 }
 
@@ -282,13 +292,13 @@ struct StatusChip: View {
 
     var body: some View {
         Label(text, systemImage: systemImage)
-            .font(.caption.weight(.semibold))
+            .font(.caption2.weight(.semibold))
             .lineLimit(1)
             .minimumScaleFactor(0.75)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
             .foregroundStyle(tint)
-            .background(tint.opacity(0.13), in: Capsule())
+            .background(tint.opacity(0.10), in: Capsule())
             .accessibilityLabel(text)
     }
 }
