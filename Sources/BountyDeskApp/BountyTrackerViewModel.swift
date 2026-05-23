@@ -17,6 +17,18 @@ struct RefreshDiagnostics: Equatable {
     var updatedAt: Date?
 }
 
+struct BountyDebugLogEntry: Identifiable, Equatable {
+    let id: UUID
+    var timestamp: Date
+    var message: String
+
+    init(id: UUID = UUID(), timestamp: Date = Date(), message: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.message = message
+    }
+}
+
 @MainActor
 final class BountyTrackerViewModel: ObservableObject {
     @Published var isRestoringSession = false
@@ -33,6 +45,7 @@ final class BountyTrackerViewModel: ObservableObject {
     @Published var isStartingGitHubDeviceLogin = false
     @Published var isFinishingGitHubDeviceLogin = false
     @Published var refreshDiagnostics = RefreshDiagnostics()
+    @Published var debugLog: [BountyDebugLogEntry] = []
     @Published var discoveredBounties: [TrackedBountySnapshot] = []
     @Published var discoverFilters = DiscoverFilters()
 
@@ -257,13 +270,16 @@ final class BountyTrackerViewModel: ObservableObject {
         defer { isRefreshing = false }
         do {
             guard let githubToken = try keychain.read(.githubToken), githubToken.isEmpty == false else {
+                appendDebugLog("Refresh skipped: no GitHub token is stored.")
                 syncMessage = "Add a GitHub token to sync claimed PRs."
                 return
             }
             let previous = try modelContext.fetch(FetchDescriptor<Bounty>())
             let algoraToken = try keychain.read(.algoraToken)
             let orgs = watchedOrgs.filter(\.isEnabled).map(\.handle)
+            appendDebugLog("Refresh started. Watched orgs: \(orgs.isEmpty ? "none" : orgs.joined(separator: ", ")).")
             let result = await service.refreshCurrentBounties(githubToken: githubToken, algoraToken: algoraToken, watchedOrgs: orgs)
+            appendDebugLog("Refresh scanned \(result.scannedPullRequestCount) PR(s), skipped \(result.skippedPullRequestCount), failed \(result.failedPullRequestCount), verified \(result.bounties.count).")
             warnings = result.warnings
             refreshDiagnostics = RefreshDiagnostics(
                 githubLogin: result.user?.login ?? authenticatedLogin,
@@ -291,6 +307,7 @@ final class BountyTrackerViewModel: ObservableObject {
                 syncMessage = "Refresh finished. Updated \(count) verified Algora bounty PRs from \(scanSummary)."
             }
         } catch {
+            appendDebugLog("Refresh failed: \(error.localizedDescription).")
             syncMessage = error.localizedDescription
         }
     }
@@ -306,13 +323,40 @@ final class BountyTrackerViewModel: ObservableObject {
             } catch {
                 token = nil
             }
+            debugLog.removeAll()
+            appendDebugLog("Discovery started. GitHub token: \(token?.isEmpty == false ? "present" : "missing").")
+            appendDebugLog("Filters: org=\(debugValue(discoverFilters.org)), repo=\(debugValue(discoverFilters.repo)), language=\(debugValue(discoverFilters.language)), min=\(discoverFilters.minimumPayout), max=\(discoverFilters.maximumPayout).")
             syncMessage = "Searching verified Algora bounty comments..."
-            let result = await service.discoverBounties(filters: discoverFilters, githubToken: token)
+            let result = await service.discoverBounties(filters: discoverFilters, githubToken: token) { [weak self] message in
+                await MainActor.run {
+                    self?.appendDebugLog(message)
+                }
+            }
             warnings = result.warnings
             discoveredBounties = result.bounties
             let scanText = result.scannedCandidateCount > 0 ? " from \(result.scannedCandidateCount) checked candidates" : ""
+            appendDebugLog("Discovery finished. GitHub candidates: \(result.githubCandidateCount). Algora candidates: \(result.algoraCandidateCount). Checked: \(result.scannedCandidateCount). Verified: \(result.bounties.count). Warnings: \(result.warnings.count).")
+            if result.bounties.isEmpty {
+                appendDebugLog("No visible results after filters. Check the excluded candidate lines above and relax payout/recent/competition filters if verified items were filtered out.")
+            }
             syncMessage = "Found \(result.bounties.count) verified Algora bounties\(scanText)."
         }
+    }
+
+    func clearDebugLog() {
+        debugLog.removeAll()
+    }
+
+    private func appendDebugLog(_ message: String) {
+        debugLog.append(BountyDebugLogEntry(message: message))
+        if debugLog.count > 300 {
+            debugLog.removeFirst(debugLog.count - 300)
+        }
+    }
+
+    private func debugValue(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "any" : trimmed
     }
 
     func trackDiscovered(_ snapshot: TrackedBountySnapshot) {

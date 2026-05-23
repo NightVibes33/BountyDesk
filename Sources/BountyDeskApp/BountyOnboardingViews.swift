@@ -369,7 +369,7 @@ enum OnboardingPage: Int, CaseIterable, Identifiable {
     var message: String {
         switch self {
         case .verify:
-            return "BountyDesk looks for Algora bot evidence, a visible amount, and the normal attempt or claim flow before it treats an issue as worth tracking."
+            return "BountyDesk looks for official Algora evidence, a visible amount, and the normal attempt or claim flow before it treats an issue as worth tracking."
         case .competition:
             return "Every refresh checks open, closed, merged, and rewarded claim PRs so crowded work does not look cleaner than it is."
         case .manage:
@@ -419,7 +419,7 @@ enum OnboardingPage: Int, CaseIterable, Identifiable {
         switch self {
         case .verify:
             return [
-                .init(id: "bot", title: "Algora bot", detail: "Required on issue comments", systemImage: "checkmark.seal"),
+                .init(id: "bot", title: "Official Algora", detail: "Required on issue comments", systemImage: "checkmark.seal"),
                 .init(id: "amount", title: "Payout amount", detail: "$50, $600, $1,000", systemImage: "dollarsign.circle"),
                 .init(id: "claim", title: "Claim flow", detail: "/attempt and /claim", systemImage: "arrow.triangle.branch"),
                 .init(id: "exclude", title: "Strict exclude", detail: "No manual wallet tasks", systemImage: "xmark.shield")

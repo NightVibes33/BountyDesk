@@ -28,6 +28,7 @@ struct AlgoraBountyVerification: Equatable {
 
 enum BountyParsing {
     private static let algoraBotLogin = "algora-pbc[bot]"
+    private static let algoraUserLogin = "algora-pbc"
     private static let algoraActors: Set<String> = ["algora-pbc", "algora-pbc[bot]"]
 
     static func containsClaimMarker(_ text: String) -> Bool {
@@ -79,7 +80,7 @@ enum BountyParsing {
                 issueState: issueState,
                 openPrsMentioningIssue: openPrsMentioningIssue,
                 claimPrsCount: claimPrsCount,
-                excludedReason: "No algora-pbc[bot] comment found",
+                excludedReason: "No official Algora issue comment found",
                 lastCheckedAt: lastCheckedAt,
                 evidence: []
             )
@@ -108,7 +109,7 @@ enum BountyParsing {
                 issueState: issueState,
                 openPrsMentioningIssue: openPrsMentioningIssue,
                 claimPrsCount: claimPrsCount,
-                excludedReason: "Algora bot found, but bounty amount or claim flow missing",
+                excludedReason: "Official Algora comment found, but bounty amount or claim flow missing",
                 lastCheckedAt: lastCheckedAt,
                 evidence: evidence
             )
@@ -162,7 +163,7 @@ enum BountyParsing {
                 issueState: issueState,
                 openPrsMentioningIssue: openPrsMentioningIssue,
                 claimPrsCount: claimPrsCount,
-                excludedReason: "No algora-pbc[bot] comment found",
+                excludedReason: "No official Algora issue comment found",
                 lastCheckedAt: lastCheckedAt,
                 evidence: []
             )
@@ -191,7 +192,7 @@ enum BountyParsing {
                 issueState: issueState,
                 openPrsMentioningIssue: openPrsMentioningIssue,
                 claimPrsCount: claimPrsCount,
-                excludedReason: "Algora bot found, but bounty amount or claim flow missing",
+                excludedReason: "Official Algora comment found, but bounty amount or claim flow missing",
                 lastCheckedAt: lastCheckedAt,
                 evidence: evidence
             )
@@ -280,7 +281,8 @@ enum BountyParsing {
     }
 
     private static func isAlgoraBotIssueComment(_ comment: GitHubComment) -> Bool {
-        comment.user.login.lowercased() == algoraBotLogin
+        let login = comment.user.login.lowercased()
+        return login == algoraBotLogin || login == algoraUserLogin
     }
 
     static func latestAlgoraBotComment(from comments: [GitHubComment]) -> String {
@@ -462,7 +464,7 @@ enum BountyParsing {
     static func hasAlgoraEvidence(labels: [String], body: String, comments: [String]) -> Bool {
         let commentText = comments.joined(separator: "\n")
         let normalized = commentText.lowercased()
-        return normalized.contains(algoraBotLogin)
+        return (normalized.contains(algoraBotLogin) || normalized.contains(algoraUserLogin))
             && algoraBountyAmount(in: commentText) != nil
             && algoraClaimFlowSeen(in: commentText)
     }

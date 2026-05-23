@@ -72,7 +72,7 @@ struct BountyDetailView: View {
                 Text(bounty.issueBodySummary.isEmpty ? "No issue summary cached." : bounty.issueBodySummary)
                 LabeledContent("Issue Status", value: bounty.issueState.rawValue)
                 if let issue = issues.first {
-                    Text(issue.latestBotComment.isEmpty ? "No Algora bot comment cached." : issue.latestBotComment)
+                    Text(issue.latestBotComment.isEmpty ? "No official Algora issue comment cached." : issue.latestBotComment)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
