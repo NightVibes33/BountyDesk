@@ -71,6 +71,31 @@ final class BountyParsingTests: XCTestCase {
         XCTAssertTrue(verification.claimFlowSeen)
     }
 
+    func testDiscoveryVerificationRequiresAlgoraBotIssueComment() {
+        let verification = BountyParsing.classifyAlgoraDiscoveryOnly(
+            issue: Self.issue(body: "$50 bounty with /attempt #123 and /claim #123 in plain issue text."),
+            comments: [],
+            repo: "org/repo"
+        )
+        XCTAssertEqual(verification.source, .notAlgora)
+        XCTAssertFalse(verification.verified)
+        XCTAssertFalse(verification.algoraBotSeen)
+        XCTAssertEqual(verification.excludedReason, "No algora-pbc[bot] issue comment found")
+    }
+
+    func testDiscoveryVerificationAcceptsAlgoraBotIssueComment() {
+        let verification = BountyParsing.classifyAlgoraDiscoveryOnly(
+            issue: Self.issue(body: "Plain issue text."),
+            comments: [Self.comment(login: "algora-pbc", type: "Bot", body: "$50 bounty\nSteps to solve\nStart working: /attempt #123\nSubmit work: /claim #123\nReward")],
+            repo: "org/repo"
+        )
+        XCTAssertEqual(verification.source, .algora)
+        XCTAssertTrue(verification.verified)
+        XCTAssertEqual(verification.amountUsd, 50)
+        XCTAssertTrue(verification.algoraBotSeen)
+        XCTAssertTrue(verification.claimFlowSeen)
+    }
+
     func testAlgoraOnlyVerificationExcludesManualPayoutSignalsWithoutBot() {
         let cases = [
             "Gitcoin task with payment wallet and USDC on Arbitrum",
@@ -704,6 +729,72 @@ final class AlgoraFallbackTests: XCTestCase {
         }
     }
 
+    func testDiscoverExcludesBroadBountySearchWithoutAlgoraBotComment() async {
+        MockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/search/issues":
+                return Self.searchIssueResponse(body: "Gitcoin payment wallet bounty paid in USDC on Arbitrum")
+            case "/repos/org/repo/issues/123":
+                return Self.issueResponse(body: "Gitcoin payment wallet bounty paid in USDC on Arbitrum")
+            case "/repos/org/repo/issues/123/comments", "/repos/org/repo/issues/123/events":
+                return Self.jsonArrayResponse(for: request)
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return Self.jsonArrayResponse(for: request)
+            }
+        }
+        let session = GitHubClientTests.mockSession()
+        let service = BountyTrackerService(
+            github: GitHubClient(session: session),
+            algoraPublic: AlgoraPublicClient(session: session),
+            riskScoring: RiskScoringService()
+        )
+        var filters = DiscoverFilters()
+        filters.onlyAlgoraEvidence = false
+        let result = await service.discoverBounties(filters: filters, githubToken: nil)
+        XCTAssertTrue(result.bounties.isEmpty)
+    }
+
+    func testDiscoverAcceptsOnlyAlgoraBotAmountAndClaimFlow() async {
+        MockURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/search/issues":
+                return Self.searchIssueResponse(body: "Issue body is not trusted by itself")
+            case "/repos/org/repo/issues/123":
+                return Self.issueResponse(body: "Issue body is not trusted by itself")
+            case "/repos/org/repo/issues/123/comments":
+                let data = """
+                [
+                  {
+                    "id": 1,
+                    "body": "$50 bounty\\nSteps to solve\\nStart working: /attempt #123\\nSubmit work: /claim #123\\nReward",
+                    "user": {"login":"algora-pbc","type":"Bot"},
+                    "html_url":"https://github.com/org/repo/issues/123#issuecomment-1",
+                    "created_at":"2026-05-22T04:00:00Z",
+                    "updated_at":"2026-05-22T04:00:00Z"
+                  }
+                ]
+                """.data(using: .utf8)!
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, data)
+            case "/repos/org/repo/issues/123/events":
+                return Self.jsonArrayResponse(for: request)
+            default:
+                XCTFail("Unexpected request: \(request.url?.absoluteString ?? "nil")")
+                return Self.jsonArrayResponse(for: request)
+            }
+        }
+        let session = GitHubClientTests.mockSession()
+        let service = BountyTrackerService(
+            github: GitHubClient(session: session),
+            algoraPublic: AlgoraPublicClient(session: session),
+            riskScoring: RiskScoringService()
+        )
+        let result = await service.discoverBounties(filters: DiscoverFilters(), githubToken: nil)
+        XCTAssertEqual(result.bounties.count, 1)
+        XCTAssertEqual(result.bounties.first?.amount, 50)
+        XCTAssertTrue(result.bounties.first?.algoraEvidence.first == "Verified Algora bounty")
+    }
+
     func testDiscoverContinuesWhenPublicAlgoraFails() async {
         MockURLProtocol.handler = { request in
             if request.url?.host == "api.github.com" {
@@ -724,6 +815,54 @@ final class AlgoraFallbackTests: XCTestCase {
         let result = await service.discoverBounties(filters: filters, githubToken: nil)
         XCTAssertEqual(result.bounties.count, 0)
         XCTAssertTrue(result.warnings.contains { $0.contains("Public Algora discovery failed") })
+    }
+
+    private static func searchIssueResponse(body: String) -> (HTTPURLResponse, Data) {
+        let json = """
+        {
+          "total_count": 1,
+          "incomplete_results": false,
+          "items": [
+            {
+              "url": "https://api.github.com/repos/org/repo/issues/123",
+              "repository_url": "https://api.github.com/repos/org/repo",
+              "html_url": "https://github.com/org/repo/issues/123",
+              "number": 123,
+              "title": "Bounty candidate",
+              "body": "\(body)",
+              "state": "open",
+              "labels": [{"name":"bounty"}],
+              "user": {"login":"maintainer","type":"User"},
+              "comments": 1,
+              "updated_at": "2026-05-22T04:00:00Z",
+              "created_at": "2026-05-22T03:00:00Z"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        return (HTTPURLResponse(url: URL(string: "https://api.github.com/search/issues")!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+    }
+
+    private static func issueResponse(body: String) -> (HTTPURLResponse, Data) {
+        let json = """
+        {
+          "html_url": "https://github.com/org/repo/issues/123",
+          "number": 123,
+          "state": "open",
+          "title": "Bounty candidate",
+          "body": "\(body)",
+          "labels": [{"name":"bounty"}],
+          "user": {"login":"maintainer","type":"User"},
+          "assignees": [],
+          "updated_at": "2026-05-22T04:00:00Z",
+          "closed_at": null
+        }
+        """.data(using: .utf8)!
+        return (HTTPURLResponse(url: URL(string: "https://api.github.com/repos/org/repo/issues/123")!, statusCode: 200, httpVersion: nil, headerFields: nil)!, json)
+    }
+
+    private static func jsonArrayResponse(for request: URLRequest) -> (HTTPURLResponse, Data) {
+        (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, "[]".data(using: .utf8)!)
     }
 }
 

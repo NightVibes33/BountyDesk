@@ -346,14 +346,10 @@ struct BountyTrackerService {
             closedAt: nil
         )
         let issueComments = (try? await github.issueComments(owner: owner, repo: repo, number: number, token: githubToken)) ?? []
-        let issueEvents = (try? await github.issueEvents(owner: owner, repo: repo, number: number, token: githubToken)) ?? []
-        let officialAlgoraEvidence = BountyParsing.officialAlgoraEventEvidence(issueEvents: issueEvents, pullRequestEvents: [])
-        let verification = BountyParsing.classifyAlgoraOnly(
+        let verification = BountyParsing.classifyAlgoraDiscoveryOnly(
             issue: issue,
             comments: issueComments,
             repo: repoSlug,
-            claimEvidenceText: [task.body, issue.body].compactMap { $0 }.joined(separator: "\n"),
-            officialEventEvidence: officialAlgoraEvidence,
             claimPrsCount: dto.claims?.count ?? 0
         )
         guard verification.verified else { return nil }
@@ -434,15 +430,11 @@ struct BountyTrackerService {
         async let issueCommentsTask = github.issueComments(owner: slug.owner, repo: slug.repo, number: item.number, token: token)
         let issue = (try? await issueTask) ?? fallbackIssue(from: item, owner: slug.owner, repo: slug.repo, number: item.number)
         let issueComments = (try? await issueCommentsTask) ?? []
-        let issueEvents = (try? await github.issueEvents(owner: slug.owner, repo: slug.repo, number: item.number, token: token)) ?? []
         let repoSlug = "\(slug.owner)/\(slug.repo)"
-        let officialAlgoraEvidence = BountyParsing.officialAlgoraEventEvidence(issueEvents: issueEvents, pullRequestEvents: [])
-        let verification = BountyParsing.classifyAlgoraOnly(
+        let verification = BountyParsing.classifyAlgoraDiscoveryOnly(
             issue: issue,
             comments: issueComments,
-            repo: repoSlug,
-            claimEvidenceText: issue.body ?? item.body ?? "",
-            officialEventEvidence: officialAlgoraEvidence
+            repo: repoSlug
         )
         guard verification.verified else { return nil }
 

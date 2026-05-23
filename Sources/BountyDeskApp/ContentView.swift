@@ -1439,7 +1439,10 @@ private struct DiscoverView: View {
                     Toggle("Active only", isOn: $app.discoverFilters.activeOnly)
                     Toggle("No paid/rewarded signal", isOn: $app.discoverFilters.noPaidSignal)
                     Toggle("Finishable today", isOn: $app.discoverFilters.finishableToday)
-                    Toggle("Only Algora evidence", isOn: $app.discoverFilters.onlyAlgoraEvidence)
+                    Label("Verified Algora only", systemImage: "checkmark.seal")
+                    Text("Search results require an algora-pbc[bot] issue comment with a visible bounty amount and claim or attempt flow.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                     Picker("Video", selection: $videoFilter) {
                         ForEach(TernaryFilter.allCases) { Text($0.rawValue).tag($0) }
                     }

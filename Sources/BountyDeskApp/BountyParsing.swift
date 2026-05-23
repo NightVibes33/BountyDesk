@@ -131,6 +131,86 @@ enum BountyParsing {
         )
     }
 
+    static func classifyAlgoraDiscoveryOnly(
+        issue: GitHubIssueResponse,
+        comments: [GitHubComment],
+        repo: String,
+        openPrsMentioningIssue: Int = 0,
+        claimPrsCount: Int = 0,
+        lastCheckedAt: Date = Date()
+    ) -> AlgoraBountyVerification {
+        let botComments = comments.filter(isAlgoraBotIssueComment)
+        let issueState: IssueState = issue.state.lowercased() == "closed" ? .closed : .open
+
+        guard botComments.isEmpty == false else {
+            return AlgoraBountyVerification(
+                source: .notAlgora,
+                verified: false,
+                amountUsd: nil,
+                algoraBotSeen: false,
+                claimFlowSeen: false,
+                rewardActionSeen: false,
+                alreadyRewarded: false,
+                repo: repo,
+                issueNumber: issue.number,
+                issueUrl: issue.htmlUrl,
+                issueState: issueState,
+                openPrsMentioningIssue: openPrsMentioningIssue,
+                claimPrsCount: claimPrsCount,
+                excludedReason: "No algora-pbc[bot] issue comment found",
+                lastCheckedAt: lastCheckedAt,
+                evidence: []
+            )
+        }
+
+        let algoraText = botComments.map(\.body).joined(separator: "\n")
+        let amount = algoraBountyAmount(in: algoraText)
+        let claimFlowSeen = algoraClaimFlowSeen(in: algoraText)
+        let rewardActionSeen = algoraRewardActionSeen(in: algoraText)
+        let alreadyRewarded = algoraAlreadyRewarded(in: algoraText)
+        let evidence = botComments.map { $0.body.trimmedSummary(limit: 700) }
+
+        guard amount != nil, claimFlowSeen else {
+            return AlgoraBountyVerification(
+                source: .notAlgora,
+                verified: false,
+                amountUsd: nil,
+                algoraBotSeen: true,
+                claimFlowSeen: claimFlowSeen,
+                rewardActionSeen: rewardActionSeen,
+                alreadyRewarded: false,
+                repo: repo,
+                issueNumber: issue.number,
+                issueUrl: issue.htmlUrl,
+                issueState: issueState,
+                openPrsMentioningIssue: openPrsMentioningIssue,
+                claimPrsCount: claimPrsCount,
+                excludedReason: "Algora bot found, but bounty amount or claim flow missing",
+                lastCheckedAt: lastCheckedAt,
+                evidence: evidence
+            )
+        }
+
+        return AlgoraBountyVerification(
+            source: .algora,
+            verified: true,
+            amountUsd: amount,
+            algoraBotSeen: true,
+            claimFlowSeen: true,
+            rewardActionSeen: rewardActionSeen,
+            alreadyRewarded: alreadyRewarded,
+            repo: repo,
+            issueNumber: issue.number,
+            issueUrl: issue.htmlUrl,
+            issueState: issueState,
+            openPrsMentioningIssue: openPrsMentioningIssue,
+            claimPrsCount: claimPrsCount,
+            excludedReason: nil,
+            lastCheckedAt: lastCheckedAt,
+            evidence: evidence
+        )
+    }
+
     static func algoraBountyAmount(in text: String) -> Int? {
         let patterns = [
             #"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([kKmM]?)(?:[^A-Za-z0-9]{0,16})(?:usd)?(?:[^A-Za-z0-9]{0,16})bounty\b"#,
@@ -174,6 +254,12 @@ enum BountyParsing {
             || normalized.contains("payment_succeeded")
             || normalized.contains("winner")
             || normalized.contains("paid by algora")
+    }
+
+    private static func isAlgoraBotIssueComment(_ comment: GitHubComment) -> Bool {
+        let login = comment.user.login.lowercased()
+        let type = comment.user.type.lowercased()
+        return login == "algora-pbc[bot]" || (login == "algora-pbc" && type == "bot")
     }
 
     static func latestAlgoraBotComment(from comments: [GitHubComment]) -> String {
